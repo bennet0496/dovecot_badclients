@@ -25,7 +25,7 @@ package.path = package.path .. ";/etc/dovecot/lua/?.lua"
 local socket = require("socket")
 local json = require("json")
 
-local list_path = "./lists"
+local list_path = "."
 local asn_script_path = "./client_networks.py"
 
 local ISO_COUNTRY = {
@@ -132,6 +132,12 @@ function iter_file(base_name)
     else
         return pairs({})
     end
+end
+
+-- https://stackoverflow.com/a/4991602
+function file_exists(name)
+   local f=io.open(name,"r")
+   if f~=nil then io.close(f) return true else return false end
 end
 
 function auth_passdb_lookup(req)
