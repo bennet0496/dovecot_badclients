@@ -169,8 +169,8 @@ function auth_passdb_lookup(req)
                 ", ip=" .. req.remote_ip ..
                 ", host=" .. dns ..
                 ", asn=" .. data.asn ..
-                ", asn_cc=" .. data.asn_country_code ..
-                ", asn_desc=<" .. data.asn_description .. ">" ..
+                ", as_cc=" .. data.asn_country_code ..
+                ", as_desc=<" .. data.asn_description .. ">" ..
                 ", net_name=<" .. data.net_name .. ">" ..
                 ", net_cc=".. data.net_country_code ..
                 ", entity=" .. es)
@@ -215,7 +215,7 @@ function auth_passdb_lookup(req)
         -- Check DNS name Regexes
         -- https://www.lua.org/pil/20.2.html
         i = 0
-        for line in iter_file("hosts.deny.lst")
+        for line in iter_file("rev_host.deny.lst")
         do
             i = i + 1
             -- skip comments and empty lines
@@ -233,7 +233,7 @@ function auth_passdb_lookup(req)
         end
         -- Check AS numbers
         i = 0
-        for line in iter_file("asn_num.deny.lst")
+        for line in iter_file("asn.deny.lst")
         do
         i = i + 1
             -- skip comments and empty lines
@@ -250,7 +250,7 @@ function auth_passdb_lookup(req)
         end
         -- Check AS Registration Countries
         i = 0
-        for line in iter_file("asn_cc.deny.lst")
+        for line in iter_file("as_cc.deny.lst")
         do
             i = i + 1
             if non_empty(line) then
@@ -268,7 +268,7 @@ function auth_passdb_lookup(req)
         -- Check AS Descriptions/Human-readable names
         -- https://www.lua.org/pil/20.2.html
         i = 0
-        for line in iter_file("asn_dscr.deny.lst")
+        for line in iter_file("as_dscr.deny.lst")
         do
             i = i + 1
             if non_empty(line) then
