@@ -1,0 +1,11 @@
+-- List of LUA Regular Expressions [1] of reverse hostname patterns (PTR) as resolved
+-- by the local resolver
+--
+-- Empty Lines and Lines starting with "--", "#", or ";" (without quotes) are ignored.
+--
+-- Matching is case sensitive
+--
+-- [1] https://www.lua.org/pil/20.2.html
+
+-- Ex:
+#ec2-%d*%-%d*%-%d*%-%d*%-%d*%.compute%-1%.amazonaws%.com

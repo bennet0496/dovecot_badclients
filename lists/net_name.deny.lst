@@ -1,0 +1,15 @@
+-- List of LUA Regular Expressions [1] of network names as specified in the WHOIS
+-- These are provider specified and not necessarily unique. I.e., 2 or more providers
+-- may use overlapping network names. As any other list, it is check independently of
+-- the others, i.e. you cannot set that AS nam AND network have to match; if either
+-- matches that request is blocked.
+--
+-- Empty Lines and Lines starting with "--", "#", or ";" (without quotes) are ignored.
+--
+-- Matching is case sensitive
+--
+-- [1] https://www.lua.org/pil/20.2.html
+
+-- Ex:
+#.*VODAFONE.*
+#DTAG%-.%

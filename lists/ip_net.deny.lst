@@ -1,0 +1,9 @@
+-- List CIDR IPv4 networks to block
+-- WARNING: It is not checked whether host-bits are set, the mask is applied blindly
+--
+-- Empty Lines and Lines starting with "--", "#", or ";" (without quotes) are ignored.
+-- Comments after the entry  are supported
+--
+-- Matching is case sensitive
+
+109.42.242.226/24

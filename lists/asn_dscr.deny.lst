@@ -1,0 +1,12 @@
+-- List of LUA Regular Expressions [1] of AS descriptions/names as specified in the WHOIS
+-- These should be relatively unique
+--
+-- Empty Lines and Lines starting with "--", "#", or ";" (without quotes) are ignored.
+--
+-- Matching is case sensitive
+--
+-- [1] https://www.lua.org/pil/20.2.html
+
+-- Ex:
+#.*LINODE.*
+#AMAZON.*

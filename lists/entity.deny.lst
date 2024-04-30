@@ -1,0 +1,11 @@
+-- List of LUA Regular Expressions [1] of entities related to a WHOIS record
+-- These are tags assigned by the RIR to more or less uniquely identify owners,
+-- admins and tech contacts.
+--
+-- Empty Lines and Lines starting with "--", "#", or ";" (without quotes) are ignored.
+--
+-- Matching is case sensitive
+--
+-- [1] https://www.lua.org/pil/20.2.html
+
+AT%-88%-Z

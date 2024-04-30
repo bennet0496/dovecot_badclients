@@ -1,0 +1,9 @@
+-- List AS numbers to block access for
+--
+-- Empty Lines and Lines starting with "--", "#", or ";" (without quotes) are ignored.
+-- Comments after the entry  are supported
+--
+-- Matching is case sensitive
+
+-- Ex:
+# AS36492  GOOGLEWIFI, US
