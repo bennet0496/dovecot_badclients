@@ -6,4 +6,5 @@
 --
 -- Matching is case sensitive
 
-109.42.242.226/24
+-- Ex.
+#109.42.242.0/24   Random Vodafone Subnet
