@@ -21,14 +21,20 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 #
+import os.path
+
 from ipwhois import IPWhois
 from ipwhois.utils import ipv4_is_defined
+from datetime import datetime
+
 import sys
 import json
-from datetime import datetime
-from typing import *
 import socket
 import struct
+import iniconfig
+import portalocker
+
+from typing import *
 
 
 def find_net(ip: str, arr: Iterable[str]) -> str | None:
@@ -47,53 +53,74 @@ def main():
     if len(sys.argv) < 2:
         return
     ip = sys.argv[1]
-    reserved = ipv4_is_defined(ip)
-    if reserved[0]:
-        data = {
-            "asn": "None",
-            "asn_country_code": "ZZ",
-            "asn_description": "IANA-RESERVED",
-            "net_name": reserved[1],
-            "net_country_code": "ZZ",
-            "entities": ["None"],
-            "reserved": True
-        }
-        print(json.dumps(data))
-    else:
-        with (open("cache.json", "a+") as f):
-            cache = {}
-            f.seek(0)
-            if f.read(2) != "":
-                f.seek(0)
-                cache = json.load(f)
-            netw = find_net(ip, cache.keys())
-            if netw is None or \
-                    (cache[netw]["ts"] + (60 * 60 * 24)) < (datetime.utcnow() - datetime(1970, 1, 1)).total_seconds():
-                obj = IPWhois(ip)
-                results = obj.lookup_rdap(depth=1)
-                cache[results['asn_cidr']] = results
-                cache[results['asn_cidr']]['ts'] = (datetime.utcnow() - datetime(1970, 1, 1)).total_seconds()
-            else:
-                results = cache[netw]
 
+    if os.path.exists("/etc/dovecot/bad_clients.conf.ext"):
+        conf = iniconfig.IniConfig("/etc/dovecot/bad_clients.conf.ext")
+    elif os.path.exists("/usr/local/etc/dovecot/bad_clients.conf.ext"):
+        conf = iniconfig.IniConfig("/etc/dovecot/bad_clients.conf.ext")
+    elif os.path.exists("/usr/local/dovecot/bad_clients.conf.ext"):
+        conf = iniconfig.IniConfig("/etc/dovecot/bad_clients.conf.ext")
+    else:
+        conf = {
+            'cachepath': '/var/run/dovecot/whois_cache.json',
+            'mode': 'whois'
+        }
+
+    if conf['mode'] == 'maxmind':
+        pass
+    elif conf['mode'] == 'whois':
+        reserved = ipv4_is_defined(ip)
+        if reserved[0]:
             data = {
-                "asn": "AS" + results['asn'],
-                "asn_country_code": results['asn_country_code'] or "None",
-                "asn_description": results['asn_description'],
-                "net_name": results['network']['name'],
-                "net_country_code": results['network']['country'] or "None",
-                "entities": results['entities']
+                "asn": "None",
+                "asn_country_code": "ZZ",
+                "asn_description": "IANA-RESERVED",
+                "net_name": reserved[1],
+                "net_country_code": "ZZ",
+                "entities": ["None"],
+                "reserved": True
             }
-            try:
+            print(json.dumps(data))
+        else:
+            with portalocker.Lock(conf['cachepath'], mode='a+', timeout=10) as f:
+                cache = {}
                 f.seek(0)
-                f.truncate()
-                json.dump(cache, f)
-                print(json.dumps(data))
-            except KeyboardInterrupt:
-                f.seek(0)
-                f.truncate()
-                json.dump(cache, f)
-                sys.exit(1)
+                if f.read(2) != "":
+                    f.seek(0)
+                    try:
+                        cache = json.load(f)
+                    except json.JSONDecodeError:
+                        pass
+                    except TypeError:
+                        pass
+                netw = find_net(ip, cache.keys())
+                if netw is None or \
+                        (cache[netw]["ts"] + (60 * 60 * 24)) < (datetime.utcnow() - datetime(1970, 1, 1)).total_seconds():
+                    obj = IPWhois(ip)
+                    results = obj.lookup_rdap(depth=1)
+                    cache[results['asn_cidr']] = results
+                    cache[results['asn_cidr']]['ts'] = (datetime.utcnow() - datetime(1970, 1, 1)).total_seconds()
+                else:
+                    results = cache[netw]
+
+                data = {
+                    "asn": "AS" + results['asn'],
+                    "asn_country_code": results['asn_country_code'] or "None",
+                    "asn_description": results['asn_description'],
+                    "net_name": results['network']['name'],
+                    "net_country_code": results['network']['country'] or "None",
+                    "entities": results['entities']
+                }
+                try:
+                    print(json.dumps(data))
+                    f.seek(0)
+                    f.truncate()
+                    json.dump(cache, f)
+                except KeyboardInterrupt:
+                    f.seek(0)
+                    f.truncate()
+                    json.dump(cache, f)
+                    sys.exit(1)
 
 
 if __name__ == "__main__":

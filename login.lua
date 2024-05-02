@@ -22,10 +22,7 @@
 --
 package.path = package.path .. ";/etc/dovecot/lua/?.lua"
 
-local socket = require("socket")
-local json = require("json")
-
-local list_path = "."
+local list_path = "./lists"
 local asn_script_path = "./client_networks.py"
 
 local ISO_COUNTRY = {
@@ -114,13 +111,6 @@ local ISO_COUNTRY = {
     ["ZZ"] = "LOCAL COUNTRY",                                   ["None"] = "UNKOWN COUNTRY"
 }
 
-function script_init()
-    return 0
-end
-
-function script_deinit()
-end
-
 function non_empty(line)
     return line:match("^[#;].*$") == nil and line:match("^%-%-.*") == nil and line:match("^%s*$") == nil
 end
@@ -140,8 +130,48 @@ function file_exists(name)
    if f~=nil then io.close(f) return true else return false end
 end
 
+-- https://stackoverflow.com/a/17878208
+function prequire(m)
+  local ok, err = pcall(require, m)
+  if not ok then return nil, err end
+  return err
+end
+
+function script_init()
+    local inifile = prequire('inifile')
+    if not inifile then
+    	dovecot.i_error('failed loading inifile')
+    	return -1
+    end
+    local conf
+    if file_exists("/etc/dovecot/bad_clients.conf.ext") then
+        conf = inifile.parse("/etc/dovecot/bad_clients.conf.ext")
+    elseif file_exists("/usr/local/etc/dovecot/bad_clients.conf.ext") then
+        conf = inifile.parse("/etc/dovecot/bad_clients.conf.ext")
+    elseif file_exists("/usr/local/dovecot/bad_clients.conf.ext") then
+        conf = inifile.parse("/etc/dovecot/bad_clients.conf.ext")
+    end
+    if conf["list_path"] ~= nil then
+    	list_path = conf["list_path"]
+    end
+    if conf["asn_script_path"] ~= nil then
+    	asn_script_path = conf["asn_script_path"]
+    end
+
+    return 0
+end
+
+function script_deinit()
+end
+
 function auth_passdb_lookup(req)
-    -- dovecot.i_info(req.rip)
+    local socket = prequire("socket")
+    local json = prequire("json") or prequire("cjson")
+
+    if not json or not socket then
+    	return dovecot.auth.PASSDB_RESULT_INTERNAL_FAILURE, "missing libaries"
+    end
+
     local dns, _ = socket.dns.tohostname(req.remote_ip)
     if dns == nil
     then
