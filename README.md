@@ -277,7 +277,7 @@ In other setups and with other IMAP servers the script will currently not work.
 # Bad Client Examples
 Here are some example of clients and services worth blocking. Inspired by a [list of prohibited mail client at Uni Bonn](https://www.hrz.uni-bonn.de/de/nachrichten/abruf-durch-unzulaessige-e-mail-clients-gesperrt), because the clients more or less silently and transparently funnel credentials and/or messages through their clouds
 
-**Mail Clients**
+**Mail Clients connecting via the cloud**
 - New Outlook (Microsoft Corporation)
   - [Windows](https://www.microsoft.com/store/productId/9NRX63209R7B?ocid=pdpshare), macOS (with Cloud sync enabled)
   - [Privacy Policy](https://privacy.microsoft.com/en-us/privacystatement)
@@ -294,6 +294,12 @@ Here are some example of clients and services worth blocking. Inspired by a [lis
   - [Android](https://play.google.com/store/apps/details?id=com.cloudmagic.mail)
   - [Privacy Policy](https://newtonhq.com/k/privacypolicy)
   - Syncs via AWS EC2 instances
+- Spark Mail 
+  - [Android](https://play.google.com/store/apps/details?id=com.readdle.spark), macOS, iOS, [Windows](https://apps.microsoft.com/store/detail/XPFCS9QJBKTHVZ?ocid=pdpshare)
+  - [Privacy Policy](https://sparkmailapp.com/legal/privacy-app)
+  - Syncs locally and via GCE
+  - [Google Cloud Ranges available](https://www.gstatic.com/ipranges/cloud.json)
+  - AS396982 (GOOGLE-CLOUD-PLATFORM, US)
 - Email App for Outlook & others, Email App for Yahoo! & others, Univeral Email and other derivatives of Mail.ru (Craigpark Limited/Mail.ru Group)
   - Android [[1]](https://play.google.com/store/apps/details?id=park.outlook.sign.in.client) [[2]](https://play.google.com/store/apps/details?id=park.yahoo.sign.in.app) [[3]](https://play.google.com/store/apps/details?id=park.hotm.email.app) [[4]](https://play.google.com/store/apps/details?id=ru.mail.mailapp)
   - Privacy Policy: [Craigpark Limited](https://docs.google.com/document/d/e/2PACX-1vT75n625hDx7EANwxBtTYS5hZGAEVKDAjOOCdhuY3oqoj4w84r2xkSXVq08-yCwY6D49Kja58R57qdS/pub?mp=android&mmp=mail), [Mail.ru](https://help.mail.ru/legal/terms/mail?mp=android&mmp=mail)
@@ -307,7 +313,7 @@ Here are some example of clients and services worth blocking. Inspired by a [lis
   - AS63949 (Akamai Connected Cloud (Linode LLC)) and maybe others 
   - [Linode IP Ranges](https://geoip.linode.com/)
 
-**Connect services**
+**Services that allow to connect external accounts**
 - GMail web ["Check Mail for other Accounts"](https://support.google.com/mail/answer/21289?ctx=gmail&hl=en&authuser=1) & ["Send mail as"](https://support.google.com/mail/answer/22370?hl=en-GB&sjid=4857229840897368681-EU#null)
   - Hostname: `mail%-.+%-.+%.google%.com`
   - POP3, SMTP
@@ -316,6 +322,16 @@ Here are some example of clients and services worth blocking. Inspired by a [lis
   - Hostname: `%d+%-%d+%-%d+%-%d+%.protonmail%.ch`
   - IMAP
   - ASN 62371 (PROTON, CH)
+
+**Mail Apps with suspicious wording or behavior**
+- Boxer (vmWare Workspace ONE)
+  - "Data collected by Boxer [...] User informatiton [...] such as [...] credentials"
+  - [<img src="https://github.com/bennet0496/dovecot_badclients/assets/4955327/312ccb1e-6456-4203-8793-a2b1a2145803" height="300"/>](https://github.com/bennet0496/dovecot_badclients/assets/4955327/312ccb1e-6456-4203-8793-a2b1a2145803)
+- MailTime
+  - [Privacy Policy](https://mailtime.com/en/privacy)
+  - "With your permission at sign-up or use of the MailTime App, you authorize us to access and process email messages in your Connected Email Accounts in order to provide the MailTime App Services to you"
+- VK Mail
+  - Likely the same as Mail.ru if it was working
 
 ## Cloud Rages to block
 - [Office 365](https://learn.microsoft.com/en-us/microsoft-365/enterprise/urls-and-ip-address-ranges?view=o365-worldwide)
