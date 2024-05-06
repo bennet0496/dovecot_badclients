@@ -24,6 +24,7 @@ package.path = package.path .. ";/etc/dovecot/lua/?.lua"
 
 local list_path = "./lists"
 local asn_script_path = "./client_networks.py"
+local disabled_services = {}
 
 local ISO_COUNTRY = {
     ["AF"] = "AFGHANISTAN",                                  ["AX"] = "ALAND ISLANDS",                          ["AL"] = "ALBANIA",
@@ -150,12 +151,22 @@ function script_init()
         conf = inifile.parse("/etc/dovecot/bad_clients.conf.ext")
     elseif file_exists("/usr/local/dovecot/bad_clients.conf.ext") then
         conf = inifile.parse("/etc/dovecot/bad_clients.conf.ext")
+   elseif file_exists("bad_clients.conf.ext") then
+        conf = inifile.parse("./bad_clients.conf.ext")
     end
-    if conf["list_path"] ~= nil then
-    	list_path = conf["list_path"]
+    if conf["general"]["list_path"] ~= nil then
+    	list_path = conf["general"]["list_path"]
     end
-    if conf["asn_script_path"] ~= nil then
-    	asn_script_path = conf["asn_script_path"]
+    if conf["general"]["asn_script_path"] ~= nil then
+    	asn_script_path = conf["general"]["asn_script_path"]
+    end
+
+    if conf["general"]["disabled_services"] ~= nil then
+    	for match in (conf["general"]["disabled_services"]..","):gmatch("(.-),") do
+            local ins = match:match("^%s*(.-)%s*$")
+            table.insert(disabled_services, ins or match)
+            dovecot.i_info("will always deny for " .. (ins or match))
+        end
     end
 
     return 0
@@ -194,7 +205,7 @@ function auth_passdb_lookup(req)
 
         local es = table.concat(data.entities, ", entity=")
 
-        dovecot.i_info("user=<" .. req.user .. ">"..
+        dovecot.i_info("mail-audit: user=<" .. req.user .. ">"..
                 ", service=" .. req.service ..
                 ", ip=" .. req.remote_ip ..
                 ", host=" .. dns ..
@@ -204,6 +215,12 @@ function auth_passdb_lookup(req)
                 ", net_name=<" .. data.net_name .. ">" ..
                 ", net_cc=".. data.net_country_code ..
                 ", entity=" .. es)
+
+        for _, srv in ipairs(disabled_services) do
+        	if srv:lower() == req.service:lower() then
+                return dovecot.auth.PASSDB_RESULT_USER_DISABLED, srv:upper().." is disabled"
+        	end
+        end
 
         -- local adresses can never be blocked
         if data.reserved then
@@ -234,6 +251,11 @@ function auth_passdb_lookup(req)
 
                 local net_num = 2^24*no1 + 2^16*no2 + 2^8*no3 + no4
                 local ip_num = 2^24*io1 + 2^16*io2 + 2^8*io3 + io4
+
+                if net_num & (0xffffffff << (32-mask)) ~= net_num then
+                	dovecot.i_warning("ip_net.deny.lst line "..i.." ".. line .." has hostbits set")
+                end
+
                 -- after applying the mask, the network addresses are the same
                 -- 1111 1111.1111 1111.1111 1111.1111 1111 << (32 - mask)
                 if net_num & (0xffffffff << (32-mask)) == ip_num & (0xffffffff << (32-mask)) then

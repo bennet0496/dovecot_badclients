@@ -5,11 +5,15 @@ dovecot = {
         ["PASSDB_RESULT_NEXT"] = "dovecot.auth.PASSDB_RESULT_NEXT"
     },
     ["i_info"] = print,
-    ["i_warning"] = print
+    ["i_warning"] = print,
+    ["i_error"] = print,
 }
 
 require "login"
 
+print(script_init())
+
+print(auth_passdb_lookup({remote_ip = '172.17.1.204', user = 'honey', service = 'pop3'}))
 print(auth_passdb_lookup({remote_ip = '172.17.1.204', user = 'honey', service = 'imap'}))
 print(auth_passdb_lookup({remote_ip = '109.42.242.226', user = 'honey-blue-andr', service = 'imap'}))
 print(auth_passdb_lookup({remote_ip = '139.162.133.252', user = 'honey-sugar', service = 'imap'}))

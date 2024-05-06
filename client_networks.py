@@ -55,11 +55,13 @@ def main():
     ip = sys.argv[1]
 
     if os.path.exists("/etc/dovecot/bad_clients.conf.ext"):
-        conf = iniconfig.IniConfig("/etc/dovecot/bad_clients.conf.ext")
+        conf = iniconfig.IniConfig("/etc/dovecot/bad_clients.conf.ext")["general"]
     elif os.path.exists("/usr/local/etc/dovecot/bad_clients.conf.ext"):
-        conf = iniconfig.IniConfig("/etc/dovecot/bad_clients.conf.ext")
+        conf = iniconfig.IniConfig("/etc/dovecot/bad_clients.conf.ext")["general"]
     elif os.path.exists("/usr/local/dovecot/bad_clients.conf.ext"):
-        conf = iniconfig.IniConfig("/etc/dovecot/bad_clients.conf.ext")
+        conf = iniconfig.IniConfig("/etc/dovecot/bad_clients.conf.ext")["general"]
+    elif os.path.exists("bad_clients.conf.ext"):
+        conf = iniconfig.IniConfig("bad_clients.conf.ext")["general"]
     else:
         conf = {
             'cachepath': '/var/run/dovecot/whois_cache.json',
