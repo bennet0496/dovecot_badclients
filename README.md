@@ -257,14 +257,16 @@ There is no check for set host-bits, the mask is just applied to both addresses 
 ## Logs
 The script additionally generates log lines like this for later eximination
 ```
-Mai 01 04:06:34 honeypot dovecot[56359]: auth-worker(61890): user=<honey-craig>, service=imap, ip=176.112.169.218, host=rimap26.i.mail.ru, asn=AS47764, as_cc=RU, as_desc=<VK-AS, RU>, net_name=<VK-FRONT>, net_cc=RU, entity=EY1327-RIPE, entity=ORG-LLCn4-RIPE, entity=RIPE-NCC-END-MNT, entity=VKCOMPANY-MNT, entity=VKNC, entity=MAIL-RU
-Mai 03 13:07:45 honeypot dovecot[70754]: auth-worker(77223): user=<honey>, service=imap, ip=172.17.1.204, host=dhcp204.internal, asn=None, as_cc=ZZ, as_desc=<IANA-RESERVED>, net_name=<Private-Use Networks>, net_cc=ZZ, entity=None
-Mai 06 04:20:25 honeypot dovecot[70754]: auth-worker(90054): user=<honey-sugar>, service=imap, ip=139.162.133.252, host=node-eu-0001.email2-cloud.com, asn=AS63949, as_cc=NL, as_desc=<AKAMAI-LINODE-AP Akamai Connected Cloud, SG>, net_name=<EU-LINODE-20141229>, net_cc=US, entity=linode-mnt, entity=ORG-LL72-RIPE, entity=TA2589-RIPE, entity=LAS85-RIPE
+Mai 01 04:06:34 honeypot dovecot[56359]: auth-worker(61890): mail-audit: user=<honey-craig>, service=imap, ip=176.112.169.218, host=rimap26.i.mail.ru, asn=AS47764, as_cc=RU, as_desc=<VK-AS, RU>, net_name=<VK-FRONT>, net_cc=RU, entity=EY1327-RIPE, entity=ORG-LLCn4-RIPE, entity=RIPE-NCC-END-MNT, entity=VKCOMPANY-MNT, entity=VKNC, entity=MAIL-RU
+Mai 03 13:07:45 honeypot dovecot[70754]: auth-worker(77223): mail-audit: user=<honey>, service=imap, ip=172.17.1.204, host=dhcp204.internal, asn=None, as_cc=ZZ, as_desc=<IANA-RESERVED>, net_name=<Private-Use Networks>, net_cc=ZZ, entity=None
+Mai 06 04:20:25 honeypot dovecot[70754]: auth-worker(90054): mail-audit: user=<honey-sugar>, service=imap, ip=139.162.133.252, host=node-eu-0001.email2-cloud.com, asn=AS63949, as_cc=NL, as_desc=<AKAMAI-LINODE-AP Akamai Connected Cloud, SG>, net_name=<EU-LINODE-20141229>, net_cc=US, entity=linode-mnt, entity=ORG-LL72-RIPE, entity=TA2589-RIPE, entity=LAS85-RIPE
+Mai 06 11:00:20 honeypot dovecot[91279]: auth-worker(92237): mail-audit: user=<honey-gmail-pop>, service=pop3, ip=209.85.218.15, host=mail-ej1-f15.google.com, asn=AS15169, as_cc=US, as_desc=<GOOGLE, US>, net_name=<GOOGLE>, net_cc=None, entity=GOGL
+Mai 06 11:05:24 honeypot dovecot[91279]: auth-worker(92256): mail-audit: user=<honey-gmail-smtp>, service=smtp, ip=209.85.218.53, host=mail-ej1-f53.google.com, asn=AS15169, as_cc=US, as_desc=<GOOGLE, US>, net_name=<GOOGLE>, net_cc=None, entity=GOGL
 ```
 
 A script to retrieve user statisics of the last 24h might look something like this
 ```bash
-journalctl -S "24 hours ago" -g "asn=" | awk -F : '{print $5}' | sort | uniq -c | sort -h
+journalctl -S "24 hours ago" -g "mail-audit" | awk -F : '{print $6}' | sort | uniq -c | sort -h
 ```
 
 ## Integration Other Services
@@ -275,6 +277,7 @@ In other setups and with other IMAP servers the script will currently not work.
 # Bad Client Examples
 Here are some example of clients and services worth blocking. Inspired by a [list of prohibited mail client at Uni Bonn](https://www.hrz.uni-bonn.de/de/nachrichten/abruf-durch-unzulaessige-e-mail-clients-gesperrt), because the clients more or less silently and transparently funnel credentials and/or messages through their clouds
 
+**Mail Clients**
 - New Outlook (Microsoft Corporation)
   - [Windows](https://www.microsoft.com/store/productId/9NRX63209R7B?ocid=pdpshare), macOS (with Cloud sync enabled)
   - [Privacy Policy](https://privacy.microsoft.com/en-us/privacystatement)
@@ -304,7 +307,17 @@ Here are some example of clients and services worth blocking. Inspired by a [lis
   - AS63949 (Akamai Connected Cloud (Linode LLC)) and maybe others 
   - [Linode IP Ranges](https://geoip.linode.com/)
 
-## Cloud Rages considerable to block
+**Connect services**
+- GMail web ["Check Mail for other Accounts"](https://support.google.com/mail/answer/21289?ctx=gmail&hl=en&authuser=1) & ["Send mail as"](https://support.google.com/mail/answer/22370?hl=en-GB&sjid=4857229840897368681-EU#null)
+  - Hostname: `mail%-.+%-.+%.google%.com`
+  - POP3, SMTP
+  - ASN 15169 (GOOGLE, US)
+- [Protonmail "Import via Easy Switch"](https://proton.me/easyswitch)
+  - Hostname: `%d+%-%d+%-%d+%-%d+%.protonmail%.ch`
+  - IMAP
+  - ASN 62371 (PROTON, CH)
+
+## Cloud Rages to block
 - [Office 365](https://learn.microsoft.com/en-us/microsoft-365/enterprise/urls-and-ip-address-ranges?view=o365-worldwide)
 - [Azure](https://www.microsoft.com/en-gb/download/details.aspx?id=56519)
 - [AWS](https://docs.aws.amazon.com/vpc/latest/userguide/aws-ip-ranges.html)
