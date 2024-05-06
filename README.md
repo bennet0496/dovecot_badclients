@@ -187,6 +187,7 @@ List [ISO 3166-2 country codes](https://www.iso.org/iso-3166-country-codes.html)
 | `DZ` | Algeria                           | `KY` | Cayman Islands                             | `PY` | Paraguay                                   | `ZZ` | Local Country                      |
 | `EC` | Ecuador                           | `KZ` | Kazakhstan                                 | `QA` | Qatar                                      |    |                                    |
 | `EE` | Estonia                           | `LA` | Lao People’S Democratic Republic           | `RE` | Reunion                                    |    |                                    |
+
 `whois 139.162.133.252`
 ```
 % This is the RIPE Database query service.
