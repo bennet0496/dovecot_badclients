@@ -23,16 +23,11 @@
 #
 import os.path
 
-from ipwhois import IPWhois
-from ipwhois.utils import ipv4_is_defined
-from datetime import datetime
-
 import sys
 import json
 import socket
 import struct
 import iniconfig
-import portalocker
 
 from typing import *
 
@@ -49,80 +44,126 @@ def find_net(ip: str, arr: Iterable[str]) -> str | None:
     return None
 
 
+def check_whois(conf, ip):
+    try:
+        from ipwhois import IPWhois
+        from ipwhois.utils import ipv4_is_defined
+        from datetime import datetime
+        import portalocker
+    except ImportError:
+        print('{ "error": "python modules missing" }')
+        return
+
+    reserved = ipv4_is_defined(ip)
+    if reserved[0]:
+        return {
+            "asn": "None",
+            "asn_country_code": "ZZ",
+            "asn_description": "IANA-RESERVED",
+            "net_name": reserved[1],
+            "net_country_code": "ZZ",
+            "entities": ["None"],
+            "reserved": True
+        }
+        # print(json.dumps(data))
+    else:
+        with portalocker.Lock(conf['cachepath'], mode='a+', timeout=10) as f:
+            cache = {}
+            f.seek(0)
+            if f.read(2) != "":
+                f.seek(0)
+                try:
+                    cache = json.load(f)
+                except json.JSONDecodeError:
+                    pass
+                except TypeError:
+                    pass
+            netw = find_net(ip, cache.keys())
+            if netw is None or \
+                    (cache[netw]["ts"] + (60 * 60 * 24)) < (datetime.utcnow() - datetime(1970, 1, 1)).total_seconds():
+                obj = IPWhois(ip)
+                results = obj.lookup_rdap(depth=1)
+                cache[results['asn_cidr']] = results
+                cache[results['asn_cidr']]['ts'] = (datetime.utcnow() - datetime(1970, 1, 1)).total_seconds()
+            else:
+                results = cache[netw]
+
+            try:
+                # print(json.dumps(data))
+                f.seek(0)
+                f.truncate()
+                json.dump(cache, f)
+            except KeyboardInterrupt:
+                f.seek(0)
+                f.truncate()
+                json.dump(cache, f)
+                sys.exit(1)
+
+            return {
+                "asn": "AS" + results['asn'],
+                "asn_country_code": results['asn_country_code'] or "None",
+                "asn_description": results['asn_description'],
+                "net_name": results['network']['name'],
+                "net_country_code": results['network']['country'] or "None",
+                "entities": results['entities']
+            }
+
+
+def check_maxmind(conf, ip):
+    import geoip2.database, geoip2.errors
+    if 'geo_city' not in conf or 'geo_asn' not in conf:
+        return {}
+    if not os.path.exists(conf['geo_city']) or not os.path.exists(conf['geo_asn']):
+        return {}
+
+    with geoip2.database.Reader(conf['geo_city']) as city_reader, geoip2.database.Reader(conf['geo_asn']) as asn_reader:
+        try:
+            city = city_reader.city(ip)
+            asn = asn_reader.asn(ip)
+
+            return {
+                "maxmind": {
+                    "asn": "AS{}".format(asn.autonomous_system_number),
+                    "as_org": asn.autonomous_system_organization,
+                    **city.raw
+                }
+            }
+        except geoip2.errors.AddressNotFoundError:
+            return {}
+
+
+
 def main():
     if len(sys.argv) < 2:
         return
     ip = sys.argv[1]
 
     if os.path.exists("/etc/dovecot/bad_clients.conf.ext"):
-        conf = iniconfig.IniConfig("/etc/dovecot/bad_clients.conf.ext")["general"]
+        conf = iniconfig.IniConfig("/etc/dovecot/bad_clients.conf.ext")
     elif os.path.exists("/usr/local/etc/dovecot/bad_clients.conf.ext"):
-        conf = iniconfig.IniConfig("/etc/dovecot/bad_clients.conf.ext")["general"]
+        conf = iniconfig.IniConfig("/etc/dovecot/bad_clients.conf.ext")
     elif os.path.exists("/usr/local/dovecot/bad_clients.conf.ext"):
-        conf = iniconfig.IniConfig("/etc/dovecot/bad_clients.conf.ext")["general"]
+        conf = iniconfig.IniConfig("/etc/dovecot/bad_clients.conf.ext")
     elif os.path.exists("bad_clients.conf.ext"):
-        conf = iniconfig.IniConfig("bad_clients.conf.ext")["general"]
+        conf = iniconfig.IniConfig("bad_clients.conf.ext")
     else:
         conf = {
-            'cachepath': '/var/run/dovecot/whois_cache.json',
-            'mode': 'whois'
+            'general': {
+                'cachepath': '/var/run/dovecot/whois_cache.json',
+                'mode': 'whois',
+                'enable_maxmind': 'no'
+            }
         }
 
-    if conf['mode'] == 'maxmind':
-        pass
-    elif conf['mode'] == 'whois':
-        reserved = ipv4_is_defined(ip)
-        if reserved[0]:
-            data = {
-                "asn": "None",
-                "asn_country_code": "ZZ",
-                "asn_description": "IANA-RESERVED",
-                "net_name": reserved[1],
-                "net_country_code": "ZZ",
-                "entities": ["None"],
-                "reserved": True
-            }
-            print(json.dumps(data))
-        else:
-            with portalocker.Lock(conf['cachepath'], mode='a+', timeout=10) as f:
-                cache = {}
-                f.seek(0)
-                if f.read(2) != "":
-                    f.seek(0)
-                    try:
-                        cache = json.load(f)
-                    except json.JSONDecodeError:
-                        pass
-                    except TypeError:
-                        pass
-                netw = find_net(ip, cache.keys())
-                if netw is None or \
-                        (cache[netw]["ts"] + (60 * 60 * 24)) < (datetime.utcnow() - datetime(1970, 1, 1)).total_seconds():
-                    obj = IPWhois(ip)
-                    results = obj.lookup_rdap(depth=1)
-                    cache[results['asn_cidr']] = results
-                    cache[results['asn_cidr']]['ts'] = (datetime.utcnow() - datetime(1970, 1, 1)).total_seconds()
-                else:
-                    results = cache[netw]
+    data = check_whois(conf['general'], ip)
+    mm_data = {}
 
-                data = {
-                    "asn": "AS" + results['asn'],
-                    "asn_country_code": results['asn_country_code'] or "None",
-                    "asn_description": results['asn_description'],
-                    "net_name": results['network']['name'],
-                    "net_country_code": results['network']['country'] or "None",
-                    "entities": results['entities']
-                }
-                try:
-                    print(json.dumps(data))
-                    f.seek(0)
-                    f.truncate()
-                    json.dump(cache, f)
-                except KeyboardInterrupt:
-                    f.seek(0)
-                    f.truncate()
-                    json.dump(cache, f)
-                    sys.exit(1)
+    if ('maxmind' in conf and 'enable_maxmind' in conf['general'] and
+            (conf['general']['enable_maxmind'].lower() == 'yes' or
+             conf['general']['enable_maxmind'].lower() == 'true')):
+        mm_data = check_maxmind(conf['maxmind'], ip)
+
+    print(json.dumps({**data, **mm_data}))
 
 
 if __name__ == "__main__":

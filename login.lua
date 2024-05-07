@@ -25,6 +25,7 @@ package.path = package.path .. ";/etc/dovecot/lua/?.lua"
 local list_path = "./lists"
 local asn_script_path = "./client_networks.py"
 local disabled_services = {}
+local maxmind = false
 
 local ISO_COUNTRY = {
     ["AF"] = "AFGHANISTAN",                                  ["AX"] = "ALAND ISLANDS",                          ["AL"] = "ALBANIA",
@@ -169,10 +170,27 @@ function script_init()
         end
     end
 
+    if conf["general"]["enable_maxmind"] ~= nil and (conf["general"]["enable_maxmind"]:lower() == "yes" or conf["general"]["enable_maxmind"]:lower() == true) then
+    	maxmind = true
+    end
+
     return 0
 end
 
 function script_deinit()
+end
+
+function dump(o)
+   if type(o) == 'table' then
+      local s = '{ '
+      for k,v in pairs(o) do
+         if type(k) ~= 'number' then k = '"'..k..'"' end
+         s = s .. '['..k..'] = ' .. dump(v) .. ','
+      end
+      return s .. '} '
+   else
+      return tostring(o)
+   end
 end
 
 function auth_passdb_lookup(req)
@@ -216,6 +234,34 @@ function auth_passdb_lookup(req)
                 ", net_cc=".. data.net_country_code ..
                 ", entity=" .. es)
 
+        if maxmind and data.maxmind ~= nil then
+            --print(dump(data.maxmind))
+            local logstr = "mail-audit-maxmind: user=<" .. req.user .. ">"..
+                ", service=" .. req.service ..
+                ", ip=" .. req.remote_ip ..
+                ", asn=" .. data.maxmind.asn ..
+                ", as_org=<" .. data.maxmind.as_org .. ">" ..
+                ", city=<" .. (data.maxmind.city and (data.maxmind.city.names.en .. "/" .. data.maxmind.city.geoname_id) or "") .. ">"
+            for i, subdiv in ipairs(data.maxmind.subdivisions) do
+            	logstr = logstr .. ", subdivision[".. i - 1 .."]=<".. subdiv.names.en .."/".. subdiv.geoname_id ..">"
+            end
+        	dovecot.i_info(logstr..", country=".. (data.maxmind.country and
+        	                                        (data.maxmind.country.iso_code  .. "/" ..  data.maxmind.country.geoname_id) or
+        	                                        "<>") ..
+        	                       ", continent=" .. (data.maxmind.continent and
+        	                                            (data.maxmind.continent.code .. "/" .. data.maxmind.continent.geoname_id) or
+        	                                            "<>") ..
+        	                       ", registered_country=" .. (data.maxmind.registered_country and
+        	                                                    (data.maxmind.registered_country.iso_code .. "/" .. data.maxmind.registered_country.geoname_id) or
+        	                                                    "<>") ..
+                                   (data.maxmind.represented_country and
+                                   (", represented_country=" .. data.maxmind.represented_country.iso_code .. "/" .. data.maxmind.represented_country.geoname_id) or "") ..
+                                   ", lat=" .. data.maxmind.location.latitude ..
+                                   ", lon=" .. data.maxmind.location.longitude ..
+                                   ", rad=" .. data.maxmind.location.accuracy_radius .. "km"
+            )
+        end
+
         for _, srv in ipairs(disabled_services) do
         	if srv:lower() == req.service:lower() then
                 return dovecot.auth.PASSDB_RESULT_USER_DISABLED, srv:upper().." is disabled"
@@ -239,7 +285,8 @@ function auth_passdb_lookup(req)
                 local no1,no2,no3,no4,mask = line:match("(%d%d?%d?)%.(%d%d?%d?)%.(%d%d?%d?)%.(%d%d?%d?)/(%d%d?)")
                 local io1,io2,io3,io4 = req.remote_ip:match("(%d%d?%d?)%.(%d%d?%d?)%.(%d%d?%d?)%.(%d%d?%d?)")
 
-                if no1 == nil or no2 == nil or no3 == nil or no4 == nil or mask == nil then
+                if no1 == nil or no2 == nil or no3 == nil or no4 == nil or mask == nil or
+                    no1 > 255 or no2 > 255 or no3 > 255 or no4 > 255 or mask > 32 then
                     return dovecot.auth.PASSDB_RESULT_INTERNAL_FAILURE,
                         "syntax error in " .. list_path.."/ip_net.deny.lst line " .. i
                 end
@@ -249,11 +296,11 @@ function auth_passdb_lookup(req)
                         "error parsing IP. IPv6 is currently unsupported"
                 end
 
-                local net_num = 2^24*no1 + 2^16*no2 + 2^8*no3 + no4
-                local ip_num = 2^24*io1 + 2^16*io2 + 2^8*io3 + io4
+                local net_num = (no1 << 24) | (no2 << 16) | (no3 << 8) | no4
+                local ip_num = (io1 << 24) | (io2 << 16) | (io3 << 8) | io4
 
                 if net_num & (0xffffffff << (32-mask)) ~= net_num then
-                	dovecot.i_warning("ip_net.deny.lst line "..i.." ".. line .." has hostbits set")
+                	dovecot.i_warning("ip_net.deny.lst line "..i.." " .. no1.."."..no2.."."..no3.."."..no4.."/"..mask .." has hostbits set")
                 end
 
                 -- after applying the mask, the network addresses are the same

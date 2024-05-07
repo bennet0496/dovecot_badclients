@@ -13,9 +13,11 @@ require "login"
 
 print(script_init())
 
+print(auth_passdb_lookup({remote_ip = '109.42.242.226', user = 'honey-blue-andr', service = 'imap'}))
+
+os.exit(0, true)
 print(auth_passdb_lookup({remote_ip = '172.17.1.204', user = 'honey', service = 'pop3'}))
 print(auth_passdb_lookup({remote_ip = '172.17.1.204', user = 'honey', service = 'imap'}))
-print(auth_passdb_lookup({remote_ip = '109.42.242.226', user = 'honey-blue-andr', service = 'imap'}))
 print(auth_passdb_lookup({remote_ip = '139.162.133.252', user = 'honey-sugar', service = 'imap'}))
 print(auth_passdb_lookup({remote_ip = '162.120.146.160', user = 'honey-all-ai', service = 'imap'}))
 print(auth_passdb_lookup({remote_ip = '162.120.146.160', user = 'honey-fairmail', service = 'imap'}))
