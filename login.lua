@@ -145,26 +145,40 @@ function check_regexpfile(filename, data)
     local i = 0
     for line in iter_file(filename) do
         i = i+1
-        if line:sub(1,1) == "'" then -- Lines with ' are case-insensitve literals
-            if line:sub(2):lower() == data:lower() then
-                return dovecot.auth.PASSDB_RESULT_USER_DISABLED,
-                "not allowed to authenticate from " .. data
-            end
-        elseif line:sub(1,1) == "\"" then -- Lines with " are case-sensitve literals
-            if line:sub(2) == data then
-                return dovecot.auth.PASSDB_RESULT_USER_DISABLED,
-                "not allowed to authenticate from " .. data
-            end
-        else
-            -- catch errror
-            local success, result = pcall(string.match, data, line)
-            if success and result == data then
-                return dovecot.auth.PASSDB_RESULT_USER_DISABLED,
+        if non_empty(line) then
+            if line:sub(1,1) == "'" then -- Lines with ' are case-insensitve literals
+                if line:sub(2):lower() == data:lower() then
+                    return dovecot.auth.PASSDB_RESULT_USER_DISABLED,
                     "not allowed to authenticate from " .. data
-            elseif not success then
-                return dovecot.auth.PASSDB_RESULT_INTERNAL_FAILURE,
-                    "syntax error in " .. list_path .. "/" .. filename " line "..i
+                end
+            elseif line:sub(1,1) == "\"" then -- Lines with " are case-sensitve literals
+                if line:sub(2) == data then
+                    return dovecot.auth.PASSDB_RESULT_USER_DISABLED,
+                    "not allowed to authenticate from " .. data
+                end
+            else
+                -- catch errror
+                local success, result = pcall(string.match, data, line)
+                if success and result == data then
+                    return dovecot.auth.PASSDB_RESULT_USER_DISABLED,
+                        "not allowed to authenticate from " .. data
+                elseif not success then
+                    return dovecot.auth.PASSDB_RESULT_INTERNAL_FAILURE,
+                        "syntax error in " .. list_path .. "/" .. filename .. " line "..i
+                end
             end
+        end
+    end
+
+    return nil, nil
+end
+
+function check_simplefile(filename, data, block_specifier)
+    local i = 0
+    for line in iter_file(filename) do
+        if non_empty(line) and line:lower() == tostring(data):lower() then
+            return dovecot.auth.PASSDB_RESULT_USER_DISABLED,
+            "not allowed to authenticate from " .. (block_specifier or data)
         end
     end
 
@@ -281,8 +295,10 @@ function auth_passdb_lookup(req)
                 ", asn=" .. data.maxmind.asn ..
                 ", as_org=<" .. data.maxmind.as_org .. ">" ..
                 ", city=<" .. (data.maxmind.city and (data.maxmind.city.names.en .. "/" .. data.maxmind.city.geoname_id) or "") .. ">"
-            for i, subdiv in ipairs(data.maxmind.subdivisions) do
-            	logstr = logstr .. ", subdivision[".. i - 1 .."]=<".. subdiv.names.en .."/".. subdiv.geoname_id ..">"
+            if data.maxmind.subdivisions ~= nil then
+                for i, subdiv in ipairs(data.maxmind.subdivisions) do
+                    logstr = logstr .. ", subdivision[".. i - 1 .."]=<".. subdiv.names.en .."/".. subdiv.geoname_id ..">"
+                end
             end
         	dovecot.i_info(logstr..", country=".. (data.maxmind.country and
         	                                        (data.maxmind.country.iso_code  .. "/" ..  data.maxmind.country.geoname_id) or
@@ -415,9 +431,67 @@ function auth_passdb_lookup(req)
         end
         -- MaxMind Data processing
         if data.maxmind ~= nil then
+            -- MaxMind AS Organization
             dovret, strret = check_regexpfile("maxmind/as_org.deny.lst", data.maxmind.as_org)
             if dovret ~= nil and strret ~= nil then
             	return dovret, strret
+            end
+            -- MaxMind City
+            if data.maxmind.city ~= nil then
+                dovret, strret = check_simplefile("maxmind/geo_loc.deny.lst", data.maxmind.city.geoname_id,
+                        data.maxmind.city.names.en .. ", " .. data.maxmind.country.names.en)
+                if dovret ~= nil and strret ~= nil then
+                    return dovret, strret
+                end
+            end
+            -- MaxMind Subdivision
+            if data.maxmind.subdivisions ~= nil then
+                for _, subdiv in ipairs(data.maxmind.subdivisions) do
+                    --print(subdiv.geoname_id, subdiv.names.en .. ", " .. data.maxmind.country.names.en)
+                    dovret, strret = check_simplefile("maxmind/geo_loc.deny.lst",
+                        subdiv.geoname_id, subdiv.names.en .. ", " .. data.maxmind.country.names.en)
+                    if dovret ~= nil and strret ~= nil then
+                        return dovret, strret
+                    end
+                end
+            end
+            -- MaxMind Country
+            if data.maxmind.country ~= nil then
+                dovret, strret = check_simplefile("maxmind/geo_loc.deny.lst", data.maxmind.country.geoname_id, data.maxmind.country.names.en)
+                if dovret ~= nil and strret ~= nil then
+                    return dovret, strret
+                end
+            end
+            if data.maxmind.location.latitude ~= nil and
+                data.maxmind.location.longitude ~= nil and
+                data.maxmind.location.accuracy_radius ~= nil then
+            	i = 0
+                for line in iter_file("maxmind/coords.deny.lst")
+                do
+                i = i + 1
+                    -- skip comments and empty lines
+                    if non_empty(line) then
+                        local lat,lon,rad, rad_overlap = line:match("%s*(%-?%d+%.?%d*)%s*,%s*(%-?%d+%.?%d*)%s*,%s*(%d+)%s*,%s*(%d.%d+)")
+                        local function torad(deg)
+                        	return (math.pi / 180.0) * tonumber(deg)
+                        end
+                        -- https://en.wikipedia.org/wiki/Geographical_distance
+                        local dlat = torad(data.maxmind.location.latitude) - torad(lat)
+                        local mlat = (data.maxmind.location.latitude + lat) / 2
+                        local dlon = torad(data.maxmind.location.longitude) - torad(lon)
+                        local s = 6371.009 * math.sqrt(dlat^2 + (math.cos(mlat) * dlon)^2)
+                        --print(lat,lon,rad,data.maxmind.location.latitude,data.maxmind.location.longitude,data.maxmind.location.accuracy_radius,dlat,dlon,s)
+                        if s < data.maxmind.location.accuracy_radius + rad then -- radii intersect
+                            overlap = data.maxmind.location.accuracy_radius + rad - s
+                            --print(overlap, overlap/data.maxmind.location.accuracy_radius)
+                            if overlap/data.maxmind.location.accuracy_radius > tonumber(rad_overlap) then
+                                dovecot.i_info(data.maxmind.location.latitude .. "," .. data.maxmind.location.longitude .. " is close to " .. lat .. "," .. lon)
+                            	return dovecot.auth.PASSDB_RESULT_USER_DISABLED,
+                                    "not allowed to authenticate close to forbidden location"
+                            end
+                        end
+                    end
+                end
             end
         end
     else

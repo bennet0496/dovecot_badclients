@@ -1,0 +1,18 @@
+-- List of Coordinates close to which login is forbidden as checked by MaxMind GeoCity DB
+-- https://www.maxmind.com/en/geoip-databases
+-- https://dev.maxmind.com/geoip/docs/databases/city-and-country/#blocks-files
+--
+-- Empty Lines and Lines starting with "--", "#", or ";" (without quotes) are ignored.
+--
+-- Format: latitude,longitude,radius,intersection
+-- For the check the circle drawn by these coordinates and the radius (in kilometers)
+-- and the circle drawn by MaxMind's coordinates and their accuracy radius (in kilometer)
+-- are checked for an intersection. If the overlap is more than (intersection*100)% of their
+-- accuracy radius, the request is blocked
+-- E.g. The radii of 38.741104,-49.6676859,100 and 37.977529,-48.2432889,100 intersect about
+-- 50km, i.e. ~50%
+-- For an intersection >= 1 their center coordinate is fully contained within our circle
+
+
+-- Ex.
+38.8710323,-77.0566834,200,0.5

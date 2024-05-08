@@ -1,0 +1,12 @@
+-- List Geoname ID's as specified by MaxMind GeoASN DB
+-- https://www.maxmind.com/en/geoip-databases
+-- https://www.geonames.org/
+-- https://dev.maxmind.com/geoip/docs/databases/city-and-country/#blocks-files
+--
+
+-- Ex.
+;Virgina, USA
+6254928
+
+;Ashburn, Virgina, USA
+4744870
