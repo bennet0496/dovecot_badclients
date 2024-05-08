@@ -1,0 +1,7 @@
+[general]
+disabled_services=pop3
+enable_maxmind=yes
+cachepath=whois_cache.json
+[maxmind]
+geo_city=GeoLite2-City.mmdb
+geo_asn=GeoLite2-ASN.mmdb
