@@ -245,7 +245,7 @@ $ nslookup 52.97.246.245
 Each line needs to be a valid Lua Regular expression that need to match the entire reverse name (without trailing dots), e.g. `.*%.compute%-1%.amazonaws%.com` for `ec2-52-23-158-188.compute-1.amazonaws.com`
 
 ### `entity.deny.lst`
-List of [Lua regexes](https://www.lua.org/pil/20.2.html) of related WHOIS entities like administrators or organizations.
+List of related WHOIS entities like administrators or organizations.
 
 E.g. Related with `176.112.169.192` (ASN 7764) are `EY1327-RIPE` (VK admin-c), `ORG-LLCn4-RIPE` (VK LLC), `RIPE-NCC-END-MNT` (RIPE Contact), `VKCOMPANY-MNT` (Maintainer for VK objects), `VKNC` (VK admin-c), `MAIL-RU` (abuse-c)
 
