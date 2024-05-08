@@ -1,0 +1,15 @@
+-- List of LUA Regular Expressions [1] of AS Organization as specified by MaxMind GeoASN DB
+-- https://www.maxmind.com/en/geoip-databases
+--
+-- Empty Lines and Lines starting with "--", "#", or ";" (without quotes) are ignored.
+-- Lines starting with ' are string literals, not be regexp interpret, compared ignoring case
+-- Lines starting with " are string literals, not be regexp interpret, compared case-sensitive
+--
+-- RegEx Matching is case sensitive
+--
+-- [1] https://www.lua.org/pil/20.2.html
+
+-- Ex.
+#Vodafone.*
+#"Vodafone GmbH
+#'vodafone gmbh

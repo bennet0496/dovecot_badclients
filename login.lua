@@ -114,11 +114,13 @@ local ISO_COUNTRY = {
 }
 
 function non_empty(line)
-    return line:match("^[#;].*$") == nil and line:match("^%-%-.*") == nil and line:match("^%s*$") == nil
+    return line:match("^%s*[#;].*$") == nil -- lines starting with # or ; (or only spaces before that)
+            and line:match("^%s*%-%-.*") == nil -- lines starting with -- (or only spaces before that)
+            and line:match("^%s*$") == nil -- lines with only spaces
 end
 
 function iter_file(base_name)
-    local f = io.open(list_path.."/"..base_name, "rb")
+    local f = io.open(list_path .. "/" .. base_name, "rb")
     if f then
         return f:lines()
     else
@@ -137,6 +139,56 @@ function prequire(m)
   local ok, err = pcall(require, m)
   if not ok then return nil, err end
   return err
+end
+
+function check_regexpfile(filename, data)
+    local i = 0
+    for line in iter_file(filename) do
+        i = i+1
+        if line:sub(1,1) == "'" then -- Lines with ' are case-insensitve literals
+            if line:sub(2):lower() == data:lower() then
+                return dovecot.auth.PASSDB_RESULT_USER_DISABLED,
+                "not allowed to authenticate from " .. data
+            end
+        elseif line:sub(1,1) == "\"" then -- Lines with " are case-sensitve literals
+            if line:sub(2) == data then
+                return dovecot.auth.PASSDB_RESULT_USER_DISABLED,
+                "not allowed to authenticate from " .. data
+            end
+        else
+            -- catch errror
+            local success, result = pcall(string.match, data, line)
+            if success and result == data then
+                return dovecot.auth.PASSDB_RESULT_USER_DISABLED,
+                    "not allowed to authenticate from " .. data
+            elseif not success then
+                return dovecot.auth.PASSDB_RESULT_INTERNAL_FAILURE,
+                    "syntax error in " .. list_path .. "/" .. filename " line "..i
+            end
+        end
+    end
+
+    return nil, nil
+end
+
+function check_ccfile(filename, cc)
+    local i = 0
+    for line in iter_file(filename)
+    do
+        i = i + 1
+        if non_empty(line) then
+            -- check that country code is valid
+            if ISO_COUNTRY[line:match("%a+")] == nil then
+                dovecot.i_warning("Invalid CC " .. line:match("%a+") .. " in " .. list_path .. "/" .. filename .. " line " .. i)
+            end
+            -- truncate any non letter symbols (like spaces) from CCs
+            if cc ~= nil and line:match("%a+") == cc:match("%a+") then
+                return dovecot.auth.PASSDB_RESULT_USER_DISABLED,
+                    "not allowed to authenticate from " .. ISO_COUNTRY[cc]
+            end
+        end
+    end
+    return nil, nil
 end
 
 function script_init()
@@ -189,11 +241,11 @@ function auth_passdb_lookup(req)
     end
 
     local dns, _ = socket.dns.tohostname(req.remote_ip)
-    if dns == nil
-    then
+    if dns == nil then
         dns = "<>"
     end
 
+    local handle = nil
     if file_exists(asn_script_path)
     then
         handle = io.popen(asn_script_path .. " " .. req.remote_ip)
@@ -262,6 +314,8 @@ function auth_passdb_lookup(req)
 
         -- line counter
         local i = 0
+        -- return values
+        local dovret, strret
 
         -- Check CIDR IP Networks
         for line in iter_file("ip_net.deny.lst")
@@ -275,7 +329,7 @@ function auth_passdb_lookup(req)
                 if no1 == nil or no2 == nil or no3 == nil or no4 == nil or mask == nil or
                     no1 > 255 or no2 > 255 or no3 > 255 or no4 > 255 or mask > 32 then
                     return dovecot.auth.PASSDB_RESULT_INTERNAL_FAILURE,
-                        "syntax error in " .. list_path.."/ip_net.deny.lst line " .. i
+                        "syntax error in " .. list_path .. "/ip_net.deny.lst line " .. i
                 end
 
                 if io1 == nil or io2 ==nil or io3 == nil or io4 == nil then
@@ -300,22 +354,9 @@ function auth_passdb_lookup(req)
         end
         -- Check DNS name Regexes
         -- https://www.lua.org/pil/20.2.html
-        i = 0
-        for line in iter_file("rev_host.deny.lst")
-        do
-            i = i + 1
-            -- skip comments and empty lines
-            if non_empty(line) then
-                -- catch errror
-                local success, result = pcall(string.match, dns, line)
-                if success and result == dns then
-                    return dovecot.auth.PASSDB_RESULT_USER_DISABLED,
-                        "not allowed to authenticate from " .. dns
-                elseif not success then
-                    return dovecot.auth.PASSDB_RESULT_INTERNAL_FAILURE,
-                        "syntax error in "..list_path.."/hosts.deny.lst line "..i
-                end
-            end
+        dovret, strret = check_regexpfile("rev_host.deny.lst", dns)
+        if dovret ~= nil and strret ~= nil then
+            return dovret, strret
         end
         -- Check AS numbers
         i = 0
@@ -324,7 +365,8 @@ function auth_passdb_lookup(req)
         i = i + 1
             -- skip comments and empty lines
             if non_empty(line) then
-                if line:match("AS%d+") == data.asn:match("AS%d+") then
+                if line:match("AS%d+") == data.asn:match("AS%d+") or
+                    (data.maxmind ~= nil and line:match("AS%d+") == data.maxmind.asn:match("AS%d+")) then
                     --return data.asn, line
                     return dovecot.auth.PASSDB_RESULT_USER_DISABLED,
                         "not allowed to authenticate from " .. data.asn
@@ -335,96 +377,47 @@ function auth_passdb_lookup(req)
             end
         end
         -- Check AS Registration Countries
-        i = 0
-        for line in iter_file("as_cc.deny.lst")
-        do
-            i = i + 1
-            if non_empty(line) then
-                -- check that country code is valid
-                if ISO_COUNTRY[line:match("%a+")] == nil then
-                	dovecot.i_warning("Invalid CC "..line:match("%a+").." in "..list_path.."/asn_cc.deny.lst line "..i)
-                end
-                -- truncate any non letter symbols (like spaces) from CCs
-                if data.asn_country_code ~= nil and line:match("%a+") == data.asn_country_code:match("%a+") then
-                    return dovecot.auth.PASSDB_RESULT_USER_DISABLED,
-                        "not allowed to authenticate from ASN registerd in " .. ISO_COUNTRY[data.asn_country_code]
-                end
-            end
+        dovret, strret = check_ccfile("as_cc.deny.lst", data.asn_country_code)
+        if dovret ~= nil and strret ~= nil then
+            return dovret, strret
         end
         -- Check AS Descriptions/Human-readable names
         -- https://www.lua.org/pil/20.2.html
-        i = 0
-        for line in iter_file("as_dscr.deny.lst")
-        do
-            i = i + 1
-            if non_empty(line) then
-                -- catch errror
-                local success, result = pcall(string.match, data.asn_description, line)
-                if success and result == data.asn_description then
-                    return dovecot.auth.PASSDB_RESULT_USER_DISABLED,
-                        "not allowed to authenticate from " .. data.asn_description
-                elseif not success then
-                    return dovecot.auth.PASSDB_RESULT_INTERNAL_FAILURE,
-                        "syntax error in "..list_path.."/asn_dscr.deny.lst line "..i
-                end
-            end
+        dovret, strret = check_regexpfile("as_dscr.deny.lst", data.as_dscr)
+        if dovret ~= nil and strret ~= nil then
+            return dovret, strret
         end
         -- Check Network Country Code
-        i = 0
-        for line in iter_file("net_cc.deny.lst")
-        do
-            i = i + 1
-            if non_empty(line) then
-                -- check that country code is valid
-                if ISO_COUNTRY[line:match("%a+")] == nil then
-                	dovecot.i_warning("Invalid CC "..line:match("%a+").." in "..list_path.."/net_cc.deny.lst line "..i)
-                end
-                -- truncate any non letter symbols (like spaces) from CCs
-                if data.net_country_code ~= nil and line:match("%a+") == data.net_country_code:match("%a+") then
-                    return dovecot.auth.PASSDB_RESULT_USER_DISABLED,
-                        "not allowed to authenticate from " .. ISO_COUNTRY[data.asn_country_code]
-                end
-            end
+        dovret, strret = check_ccfile("net_cc.deny.lst", data.net_country_code)
+        if dovret ~= nil and strret ~= nil then
+            return dovret, strret
         end
         -- Check Provider Network Name
         -- This is independet of other factors, which may leed to unforseen overlaps
         -- https://www.lua.org/pil/20.2.html
-        i = 0
-        for line in iter_file("net_name.deny.lst")
-        do
-            i = i + 1
-            if non_empty(line) then
-                -- catch errror
-                local success, result = pcall(string.match, data.net_name, line)
-                if success and result == data.net_name then
-                    return dovecot.auth.PASSDB_RESULT_USER_DISABLED,
-                        "not allowed to authenticate from " .. data.asn_description
-                elseif not success then
-                    return dovecot.auth.PASSDB_RESULT_INTERNAL_FAILURE,
-                        "syntax error in "..list_path.."/net_name.deny.lst line "..i
-                end
-            end
+        dovret, strret = check_regexpfile("net_name.deny.lst", data.net_name)
+        if dovret ~= nil and strret ~= nil then
+            return dovret, strret
         end
         -- Check list of related entities
         -- These should be unique tags-names assigned by the RIR, to identify owners, admins, tech-cs
-        -- https://www.lua.org/pil/20.2.html
-        i = 0
         if data.entities ~= nil then
             for line in iter_file("entity.deny.lst") do
-                i = i + 1
                 if non_empty(line) then
                     for _, ent in ipairs(data.entities) do
-                        -- catch errror
-                        local success, result = pcall(string.match, ent, line)
-                        if success and result == ent then
+                        if line:lower() == ent:lower() then -- equalsIgnoreCase
                             return dovecot.auth.PASSDB_RESULT_USER_DISABLED,
                                 "not allowed to authenticate from network with related entity " .. ent
-                        elseif not success then
-                            return dovecot.auth.PASSDB_RESULT_INTERNAL_FAILURE,
-                                "syntax error in "..list_path.."/entity.deny.lst line "..i
                         end
                     end
                 end
+            end
+        end
+        -- MaxMind Data processing
+        if data.maxmind ~= nil then
+            dovret, strret = check_regexpfile("maxmind/as_org.deny.lst", data.maxmind.as_org)
+            if dovret ~= nil and strret ~= nil then
+            	return dovret, strret
             end
         end
     else
