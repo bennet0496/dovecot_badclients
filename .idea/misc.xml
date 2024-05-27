@@ -6,5 +6,5 @@
   <component name="NodePackageJsonFileManager">
     <packageJsonPaths />
   </component>
-  <component name="ProjectRootManager" version="2" project-jdk-name="Python 3.10 (certbot-mixeddns-auth)" project-jdk-type="Python SDK" />
+  <component name="ProjectRootManager" version="2" project-jdk-name="Python 3.10 (dovecot_badclients)" project-jdk-type="Python SDK" />
 </project>

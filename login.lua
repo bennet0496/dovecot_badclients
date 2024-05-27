@@ -269,7 +269,7 @@ function auth_passdb_lookup(req)
     then
     	local output = handle:read('*a')
         local data = json.decode(output)
-        if output == nil or data == nil
+        if output == nil or data == nil or data.error ~= nil
         then
             return dovecot.auth.PASSDB_RESULT_INTERNAL_FAILURE, "lookup empty"
         end

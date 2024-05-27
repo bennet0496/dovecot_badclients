@@ -67,46 +67,49 @@ def check_whois(conf, ip):
         }
         # print(json.dumps(data))
     else:
-        with portalocker.Lock(conf['cachepath'], mode='a+', timeout=10) as f:
-            cache = {}
-            f.seek(0)
-            if f.read(2) != "":
+        try:
+            with portalocker.Lock(conf['cachepath'], mode='a+', timeout=10) as f:
+                cache = {}
                 f.seek(0)
+                if f.read(2) != "":
+                    f.seek(0)
+                    try:
+                        cache = json.load(f)
+                    except json.JSONDecodeError:
+                        pass
+                    except TypeError:
+                        pass
+                netw = find_net(ip, cache.keys())
+                if netw is None or \
+                        (cache[netw]["ts"] + (60 * 60 * 24)) < (datetime.utcnow() - datetime(1970, 1, 1)).total_seconds():
+                    obj = IPWhois(ip)
+                    results = obj.lookup_rdap(depth=1)
+                    cache[results['asn_cidr']] = results
+                    cache[results['asn_cidr']]['ts'] = (datetime.utcnow() - datetime(1970, 1, 1)).total_seconds()
+                else:
+                    results = cache[netw]
+
                 try:
-                    cache = json.load(f)
-                except json.JSONDecodeError:
-                    pass
-                except TypeError:
-                    pass
-            netw = find_net(ip, cache.keys())
-            if netw is None or \
-                    (cache[netw]["ts"] + (60 * 60 * 24)) < (datetime.utcnow() - datetime(1970, 1, 1)).total_seconds():
-                obj = IPWhois(ip)
-                results = obj.lookup_rdap(depth=1)
-                cache[results['asn_cidr']] = results
-                cache[results['asn_cidr']]['ts'] = (datetime.utcnow() - datetime(1970, 1, 1)).total_seconds()
-            else:
-                results = cache[netw]
+                    # print(json.dumps(data))
+                    f.seek(0)
+                    f.truncate()
+                    json.dump(cache, f)
+                except KeyboardInterrupt:
+                    f.seek(0)
+                    f.truncate()
+                    json.dump(cache, f)
+                    sys.exit(1)
 
-            try:
-                # print(json.dumps(data))
-                f.seek(0)
-                f.truncate()
-                json.dump(cache, f)
-            except KeyboardInterrupt:
-                f.seek(0)
-                f.truncate()
-                json.dump(cache, f)
-                sys.exit(1)
-
-            return {
-                "asn": "AS" + results['asn'],
-                "asn_country_code": results['asn_country_code'] or "None",
-                "asn_description": results['asn_description'],
-                "net_name": results['network']['name'],
-                "net_country_code": results['network']['country'] or "None",
-                "entities": results['entities']
-            }
+                return {
+                    "asn": "AS" + results['asn'],
+                    "asn_country_code": results['asn_country_code'] or "None",
+                    "asn_description": results['asn_description'],
+                    "net_name": results['network']['name'],
+                    "net_country_code": results['network']['country'] or "None",
+                    "entities": results['entities']
+                }
+        except portalocker.exceptions.LockException:
+            return None
 
 
 def check_maxmind(conf, ip):
@@ -132,7 +135,6 @@ def check_maxmind(conf, ip):
             return {}
 
 
-
 def main():
     if len(sys.argv) < 2:
         return
@@ -155,15 +157,23 @@ def main():
             }
         }
 
-    data = check_whois(conf['general'], ip)
-    mm_data = {}
+    tries = 0
+    data = None
+    while data is None and tries < 10:
+        data = check_whois(conf['general'], ip)
+        tries += 1
 
-    if ('maxmind' in conf and 'enable_maxmind' in conf['general'] and
-            (conf['general']['enable_maxmind'].lower() == 'yes' or
-             conf['general']['enable_maxmind'].lower() == 'true')):
-        mm_data = check_maxmind(conf['maxmind'], ip)
+    if data is None:
+        print(json.dumps({"error": "could not read data"}))
+    else:
+        mm_data = {}
 
-    print(json.dumps({**data, **mm_data}))
+        if ('maxmind' in conf and 'enable_maxmind' in conf['general'] and
+                (conf['general']['enable_maxmind'].lower() == 'yes' or
+                 conf['general']['enable_maxmind'].lower() == 'true')):
+            mm_data = check_maxmind(conf['maxmind'], ip)
+
+        print(json.dumps({**data, **mm_data}))
 
 
 if __name__ == "__main__":
