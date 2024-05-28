@@ -28,6 +28,7 @@ import json
 import socket
 import struct
 import iniconfig
+from datetime import datetime
 
 from typing import *
 
@@ -44,12 +45,76 @@ def find_net(ip: str, arr: Iterable[str]) -> str | None:
     return None
 
 
-def check_whois(conf, ip):
+def check_whois_file_cache(conf, ip):
+    from ipwhois import IPWhois
+    import portalocker
+
     try:
-        from ipwhois import IPWhois
+        with portalocker.Lock(conf['cachepath'], mode='a+', timeout=10) as f:
+            cache = {}
+            f.seek(0)
+            if f.read(2) != "":
+                f.seek(0)
+                try:
+                    cache = json.load(f)
+                except json.JSONDecodeError:
+                    pass
+                except TypeError:
+                    pass
+            netw = find_net(ip, cache.keys())
+            if netw is None or \
+                    (cache[netw]["ts"] + (60 * 60 * 24)) < (datetime.utcnow() - datetime(1970, 1, 1)).total_seconds():
+                obj = IPWhois(ip)
+                results = obj.lookup_rdap(depth=1)
+                cache[results['asn_cidr']] = results
+                cache[results['asn_cidr']]['ts'] = (datetime.utcnow() - datetime(1970, 1, 1)).total_seconds()
+            else:
+                results = cache[netw]
+
+            try:
+                # print(json.dumps(data))
+                f.seek(0)
+                f.truncate()
+                json.dump(cache, f)
+            except KeyboardInterrupt:
+                f.seek(0)
+                f.truncate()
+                json.dump(cache, f)
+                sys.exit(1)
+
+            return results
+    except portalocker.exceptions.LockException:
+        return None
+
+
+def check_whois_redis_cache(conf, ip):
+    import redis
+    from ipwhois import IPWhois
+
+    _, host, port = conf['cachepath'].split(':')
+
+    r = redis.Redis(host, port, decode_responses=True)
+    netw = find_net(ip, r.keys("*/*"))
+    if netw:
+        results = json.loads(r.get(netw))
+    else:
+        obj = IPWhois(ip)
+        results = obj.lookup_rdap(depth=1)
+        r.set(results['asn_cidr'], json.dumps(results))
+        r.expire(results['asn_cidr'], 60 * 60 * 24)
+
+    return results
+
+
+def check_whois(conf, ip):
+    use_redis = False
+    try:
         from ipwhois.utils import ipv4_is_defined
-        from datetime import datetime
-        import portalocker
+        if conf['cachepath'].startswith("redis:"):
+            import redis
+            use_redis = True
+        else:
+            import portalocker
     except ImportError:
         print('{ "error": "python modules missing" }')
         return
@@ -67,49 +132,19 @@ def check_whois(conf, ip):
         }
         # print(json.dumps(data))
     else:
-        try:
-            with portalocker.Lock(conf['cachepath'], mode='a+', timeout=10) as f:
-                cache = {}
-                f.seek(0)
-                if f.read(2) != "":
-                    f.seek(0)
-                    try:
-                        cache = json.load(f)
-                    except json.JSONDecodeError:
-                        pass
-                    except TypeError:
-                        pass
-                netw = find_net(ip, cache.keys())
-                if netw is None or \
-                        (cache[netw]["ts"] + (60 * 60 * 24)) < (datetime.utcnow() - datetime(1970, 1, 1)).total_seconds():
-                    obj = IPWhois(ip)
-                    results = obj.lookup_rdap(depth=1)
-                    cache[results['asn_cidr']] = results
-                    cache[results['asn_cidr']]['ts'] = (datetime.utcnow() - datetime(1970, 1, 1)).total_seconds()
-                else:
-                    results = cache[netw]
+        if use_redis:
+            results = check_whois_redis_cache(conf, ip)
+        else:
+            results = check_whois_file_cache(conf, ip)
 
-                try:
-                    # print(json.dumps(data))
-                    f.seek(0)
-                    f.truncate()
-                    json.dump(cache, f)
-                except KeyboardInterrupt:
-                    f.seek(0)
-                    f.truncate()
-                    json.dump(cache, f)
-                    sys.exit(1)
-
-                return {
-                    "asn": "AS" + results['asn'],
-                    "asn_country_code": results['asn_country_code'] or "None",
-                    "asn_description": results['asn_description'],
-                    "net_name": results['network']['name'],
-                    "net_country_code": results['network']['country'] or "None",
-                    "entities": results['entities']
-                }
-        except portalocker.exceptions.LockException:
-            return None
+        return {
+            "asn": "AS" + results['asn'],
+            "asn_country_code": results['asn_country_code'] or "None",
+            "asn_description": results['asn_description'],
+            "net_name": results['network']['name'],
+            "net_country_code": results['network']['country'] or "None",
+            "entities": results['entities']
+        }
 
 
 def check_maxmind(conf, ip):
@@ -177,4 +212,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # try:
+        main()
+    # except Exception as e:
+        # print('{ "error": "unknown error of type %s" }' % type(e).__name__)
