@@ -26,6 +26,10 @@ local list_path = "./lists"
 local asn_script_path = "./client_networks.py"
 local disabled_services = {}
 local maxmind = false
+local log_local = false
+local process_unknown = false
+local result_success = dovecot.auth.PASSDB_RESULT_NEXT
+local result_block = dovecot.auth.PASSDB_RESULT_USER_DISABLED
 
 local ISO_COUNTRY = {
     ["AF"] = "AFGHANISTAN",                                  ["AX"] = "ALAND ISLANDS",                          ["AL"] = "ALBANIA",
@@ -113,6 +117,14 @@ local ISO_COUNTRY = {
     ["ZZ"] = "LOCAL COUNTRY",                                   ["None"] = "UNKOWN COUNTRY"
 }
 
+function success(req)
+	if result_success == dovecot.auth.PASSDB_RESULT_NEXT or result_success == dovecot.auth.PASSDB_RESULT_USER_UNKNOWN or req.skip_password_check then
+		return result_success
+	else
+	    return dovecot.auth.PASSDB_RESULT_USER_UNKNOWN
+	end
+end
+
 function non_empty(line)
     return line:match("^%s*[#;].*$") == nil -- lines starting with # or ; (or only spaces before that)
             and line:match("^%s*%-%-.*") == nil -- lines starting with -- (or only spaces before that)
@@ -148,23 +160,23 @@ function check_regexpfile(filename, data)
         if non_empty(line) then
             if line:sub(1,1) == "'" then -- Lines with ' are case-insensitve literals
                 if line:sub(2):lower() == data:lower() then
-                    return dovecot.auth.PASSDB_RESULT_USER_DISABLED,
+                    return result_block,
                     "not allowed to authenticate from " .. data
                 end
             elseif line:sub(1,1) == "\"" then -- Lines with " are case-sensitve literals
                 if line:sub(2) == data then
-                    return dovecot.auth.PASSDB_RESULT_USER_DISABLED,
+                    return result_block,
                     "not allowed to authenticate from " .. data
                 end
             else
                 -- catch errror
                 local success, result = pcall(string.match, data, line)
                 if success and result == data then
-                    return dovecot.auth.PASSDB_RESULT_USER_DISABLED,
+                    return result_block,
                         "not allowed to authenticate from " .. data
                 elseif not success then
-                    return dovecot.auth.PASSDB_RESULT_INTERNAL_FAILURE,
-                        "syntax error in " .. list_path .. "/" .. filename .. " line "..i
+                    dovecot.i_error("syntax error in " .. list_path .. "/" .. filename .. " line "..i)
+                    return dovecot.auth.PASSDB_RESULT_INTERNAL_FAILURE, "config error"
                 end
             end
         end
@@ -177,7 +189,7 @@ function check_simplefile(filename, data, block_specifier)
     local i = 0
     for line in iter_file(filename) do
         if non_empty(line) and line:lower() == tostring(data):lower() then
-            return dovecot.auth.PASSDB_RESULT_USER_DISABLED,
+            return result_block,
             "not allowed to authenticate from " .. (block_specifier or data)
         end
     end
@@ -197,7 +209,7 @@ function check_ccfile(filename, cc)
             end
             -- truncate any non letter symbols (like spaces) from CCs
             if cc ~= nil and line:match("%a+") == cc:match("%a+") then
-                return dovecot.auth.PASSDB_RESULT_USER_DISABLED,
+                return result_block,
                     "not allowed to authenticate from " .. ISO_COUNTRY[cc]
             end
         end
@@ -218,7 +230,7 @@ function script_init()
         conf = inifile.parse("/etc/dovecot/bad_clients.conf.ext")
     elseif file_exists("/usr/local/dovecot/bad_clients.conf.ext") then
         conf = inifile.parse("/etc/dovecot/bad_clients.conf.ext")
-   elseif file_exists("bad_clients.conf.ext") then
+    elseif file_exists("bad_clients.conf.ext") then
         conf = inifile.parse("./bad_clients.conf.ext")
     end
     if conf["general"]["list_path"] ~= nil then
@@ -226,6 +238,36 @@ function script_init()
     end
     if conf["general"]["asn_script_path"] ~= nil then
     	asn_script_path = conf["general"]["asn_script_path"]
+    end
+
+    if conf["general"]["log_local"] ~= nil and (conf["general"]["log_local"]:lower() == "yes" or conf["general"]["log_local"]:lower() == "true") then
+    	log_local = true
+    end
+
+    if conf["general"]["result_success"] ~= nil then
+        local val = conf["general"]["result_success"]:lower()
+        if val == "next" then
+    	    result_success = dovecot.auth.PASSDB_RESULT_NEXT
+    	elseif val == "unknown" then
+    	    result_success = dovecot.auth.PASSDB_RESULT_USER_UNKNOWN
+    	elseif val == "ok" then
+    	    result_success = dovecot.auth.PASSDB_RESULT_OK
+    	end
+    end
+
+    if conf["general"]["result_block"] ~= nil then
+        local val = conf["general"]["result_block"]:lower()
+        if val == "disabled" then
+    	    result_block = dovecot.auth.PASSDB_RESULT_USER_DISABLED
+        elseif val == "expired" then
+            result_block = dovecot.auth.PASSDB_RESULT_PASS_EXPIRED
+        elseif val == "missmatch" then
+            result_block = dovecot.auth.PASSDB_RESULT_PASSWORD_MISMATCH
+        end
+    end
+
+    if conf["general"]["process_unknown"] ~= nil and (conf["general"]["process_unknown"]:lower() == "yes" or conf["general"]["process_unknown"]:lower() == "true") then
+    	process_unknown = true
     end
 
     if conf["general"]["disabled_services"] ~= nil then
@@ -236,7 +278,7 @@ function script_init()
         end
     end
 
-    if conf["general"]["enable_maxmind"] ~= nil and (conf["general"]["enable_maxmind"]:lower() == "yes" or conf["general"]["enable_maxmind"]:lower() == true) then
+    if conf["general"]["enable_maxmind"] ~= nil and (conf["general"]["enable_maxmind"]:lower() == "yes" or conf["general"]["enable_maxmind"]:lower() == "true") then
     	maxmind = true
     end
 
@@ -251,7 +293,13 @@ function auth_passdb_lookup(req)
     local json = prequire("json") or prequire("cjson")
 
     if not json or not socket then
+        dovecot.i_error("lua libraries missing! aborting!")
     	return dovecot.auth.PASSDB_RESULT_INTERNAL_FAILURE, "missing libaries"
+    end
+
+    -- ignore unauthenticated requests
+    if req.passdbs_seen_user_unknown and not process_unknown then
+        return dovecot.auth.PASSDB_RESULT_USER_UNKNOWN, ""
     end
 
     local dns, _ = socket.dns.tohostname(req.remote_ip)
@@ -271,67 +319,34 @@ function auth_passdb_lookup(req)
         local data = json.decode(output)
         if output == nil or data == nil or data.error ~= nil
         then
+            dovecot.i_error(string.format("failed to execute %s or lookup was empty. error=%s", asn_script_path, data and data.error or nil))
             return dovecot.auth.PASSDB_RESULT_INTERNAL_FAILURE, "lookup empty"
-        end
-
-        local es = table.concat(data.entities, ", entity=")
-
-        dovecot.i_info("mail-audit: user=<" .. req.user .. ">"..
-                ", service=" .. req.service ..
-                ", ip=" .. req.remote_ip ..
-                ", host=" .. dns ..
-                ", asn=" .. data.asn ..
-                ", as_cc=" .. data.asn_country_code ..
-                ", as_desc=<" .. data.asn_description .. ">" ..
-                ", net_name=<" .. data.net_name .. ">" ..
-                ", net_cc=".. data.net_country_code ..
-                ", entity=" .. es)
-
-        if maxmind and data.maxmind ~= nil then
-            --print(dump(data.maxmind))
-            local logstr = "mail-audit-maxmind: user=<" .. req.user .. ">"..
-                ", service=" .. req.service ..
-                ", ip=" .. req.remote_ip ..
-                ", asn=" .. data.maxmind.asn ..
-                ", as_org=<" .. data.maxmind.as_org .. ">" ..
-                ", city=<" .. (data.maxmind.city and (data.maxmind.city.names.en .. "/" .. data.maxmind.city.geoname_id) or "") .. ">"
-            if data.maxmind.subdivisions ~= nil then
-                for i, subdiv in ipairs(data.maxmind.subdivisions) do
-                    logstr = logstr .. ", subdivision[".. i - 1 .."]=<".. subdiv.names.en .."/".. subdiv.geoname_id ..">"
-                end
-            end
-        	dovecot.i_info(logstr..", country=".. (data.maxmind.country and
-        	                                        (data.maxmind.country.iso_code  .. "/" ..  data.maxmind.country.geoname_id) or
-        	                                        "<>") ..
-        	                       ", continent=" .. (data.maxmind.continent and
-        	                                            (data.maxmind.continent.code .. "/" .. data.maxmind.continent.geoname_id) or
-        	                                            "<>") ..
-        	                       ", registered_country=" .. (data.maxmind.registered_country and
-        	                                                    (data.maxmind.registered_country.iso_code .. "/" .. data.maxmind.registered_country.geoname_id) or
-        	                                                    "<>") ..
-                                   (data.maxmind.represented_country and
-                                   (", represented_country=" .. data.maxmind.represented_country.iso_code .. "/" .. data.maxmind.represented_country.geoname_id) or "") ..
-                                   ", lat=" .. data.maxmind.location.latitude ..
-                                   ", lon=" .. data.maxmind.location.longitude ..
-                                   ", rad=" .. data.maxmind.location.accuracy_radius .. "km"
-            )
-        end
-
-        for _, srv in ipairs(disabled_services) do
-        	if srv:lower() == req.service:lower() then
-                return dovecot.auth.PASSDB_RESULT_USER_DISABLED, srv:upper().." is disabled"
-        	end
-        end
-
-        -- local adresses can never be blocked
-        if data.reserved then
-        	return dovecot.auth.PASSDB_RESULT_NEXT, ""
         end
 
         -- line counter
         local i = 0
         -- return values
-        local dovret, strret
+        local dovret, strret, matched
+
+        for _, srv in ipairs(disabled_services) do
+        	if srv:lower() == req.service:lower() then
+                dovret = result_block
+                strret = srv:upper().." is disabled"
+                matched = "service"
+                goto log_and_return
+        	end
+        end
+
+        -- local adresses can never be blocked
+        if data.reserved then
+            if log_local then
+                dovret = success(req)
+                strret = ""
+                matched = ""
+                goto log_and_return
+            end
+        	return success(req), ""
+        end
 
         -- Check CIDR IP Networks
         for line in iter_file("ip_net.deny.lst")
@@ -349,30 +364,35 @@ function auth_passdb_lookup(req)
                 end
 
                 if io1 == nil or io2 ==nil or io3 == nil or io4 == nil then
-                    return dovecot.auth.PASSDB_RESULT_INTERNAL_FAILURE,
-                        "error parsing IP. IPv6 is currently unsupported"
+                    dovecot.i_error("error parsing IP. IPv6 is currently unsupported")
+                    goto continue_next_ip
                 end
 
                 local net_num = (no1 << 24) | (no2 << 16) | (no3 << 8) | no4
                 local ip_num = (io1 << 24) | (io2 << 16) | (io3 << 8) | io4
 
                 if net_num & (0xffffffff << (32-mask)) ~= net_num then
-                	dovecot.i_warning("ip_net.deny.lst line "..i.." " .. no1.."."..no2.."."..no3.."."..no4.."/"..mask .." has hostbits set")
+                	dovecot.i_warning(string.format("ip_net.deny.lst line %d %d.%d.%d.%d/%d has hostbits set", i, no1, no2, no3, no4, mask))
                 end
 
                 -- after applying the mask, the network addresses are the same
                 -- 1111 1111.1111 1111.1111 1111.1111 1111 << (32 - mask)
                 if net_num & (0xffffffff << (32-mask)) == ip_num & (0xffffffff << (32-mask)) then
-                    return dovecot.auth.PASSDB_RESULT_USER_DISABLED,
-                        "not allowed to authenticate from " .. line
+                    dovret = result_block
+                    strret = "not allowed to authenticate from " .. line
+                    matched = "ip_net"
+                    goto log_and_return
                 end
             end
+            ::continue_next_ip::
         end
         -- Check DNS name Regexes
         -- https://www.lua.org/pil/20.2.html
         dovret, strret = check_regexpfile("rev_host.deny.lst", dns)
         if dovret ~= nil and strret ~= nil then
-            return dovret, strret
+            --return dovret, strret
+            matched = "rev_host"
+            goto log_and_return
         end
         -- Check AS numbers
         i = 0
@@ -384,36 +404,50 @@ function auth_passdb_lookup(req)
                 if line:match("AS%d+") == data.asn:match("AS%d+") or
                     (data.maxmind ~= nil and line:match("AS%d+") == data.maxmind.asn:match("AS%d+")) then
                     --return data.asn, line
-                    return dovecot.auth.PASSDB_RESULT_USER_DISABLED,
-                        "not allowed to authenticate from " .. data.asn
+                    --return dovecot.auth.PASSDB_RESULT_USER_DISABLED,
+                    --    "not allowed to authenticate from " .. data.asn;
+                    dovret = result_block
+                    strret = "not allowed to authenticate from " .. data.asn
+                    matched = "asn"
+                    goto log_and_return
                 elseif line:match("AS%d+") == nil then
-                    return dovecot.auth.PASSDB_RESULT_INTERNAL_FAILURE,
-                        "syntax error in "..list_path.."/asn_num.deny.lst line "..i
+                    dovecot.i_error("syntax error in "..list_path.."/asn_num.deny.lst line "..i)
+                    --return dovecot.auth.PASSDB_RESULT_INTERNAL_FAILURE, "config error"
+                    goto continue_next_as
                 end
             end
+            ::continue_next_as::
         end
         -- Check AS Registration Countries
         dovret, strret = check_ccfile("as_cc.deny.lst", data.asn_country_code)
         if dovret ~= nil and strret ~= nil then
-            return dovret, strret
+            --return dovret, strret
+            matched = "as_cc"
+            goto log_and_return
         end
         -- Check AS Descriptions/Human-readable names
         -- https://www.lua.org/pil/20.2.html
         dovret, strret = check_regexpfile("as_dscr.deny.lst", data.as_dscr)
         if dovret ~= nil and strret ~= nil then
-            return dovret, strret
+            --return dovret, strret
+            matched = "as_dscr"
+            goto log_and_return
         end
         -- Check Network Country Code
         dovret, strret = check_ccfile("net_cc.deny.lst", data.net_country_code)
         if dovret ~= nil and strret ~= nil then
-            return dovret, strret
+            --return dovret, strret
+            matched = "net_cc"
+            goto log_and_return
         end
         -- Check Provider Network Name
         -- This is independet of other factors, which may leed to unforseen overlaps
         -- https://www.lua.org/pil/20.2.html
         dovret, strret = check_regexpfile("net_name.deny.lst", data.net_name)
         if dovret ~= nil and strret ~= nil then
-            return dovret, strret
+            --return dovret, strret
+            matched = "net_name"
+            goto log_and_return
         end
         -- Check list of related entities
         -- These should be unique tags-names assigned by the RIR, to identify owners, admins, tech-cs
@@ -422,8 +456,12 @@ function auth_passdb_lookup(req)
                 if non_empty(line) then
                     for _, ent in ipairs(data.entities) do
                         if line:lower() == ent:lower() then -- equalsIgnoreCase
-                            return dovecot.auth.PASSDB_RESULT_USER_DISABLED,
-                                "not allowed to authenticate from network with related entity " .. ent
+                            --return dovecot.auth.PASSDB_RESULT_USER_DISABLED,
+                            --    "not allowed to authenticate from network with related entity " .. ent
+                            dovret = result_block
+                            strret = "not allowed to authenticate from network with related entity " .. ent
+                            matched = "entity:" .. ent
+                            goto log_and_return
                         end
                     end
                 end
@@ -434,14 +472,18 @@ function auth_passdb_lookup(req)
             -- MaxMind AS Organization
             dovret, strret = check_regexpfile("maxmind/as_org.deny.lst", data.maxmind.as_org)
             if dovret ~= nil and strret ~= nil then
-            	return dovret, strret
+            	--return dovret, strret
+            	matched = "maxmind:as_org"
+                goto log_and_return
             end
             -- MaxMind City
             if data.maxmind.city ~= nil then
                 dovret, strret = check_simplefile("maxmind/geo_loc.deny.lst", data.maxmind.city.geoname_id,
                         data.maxmind.city.names.en .. ", " .. data.maxmind.country.names.en)
                 if dovret ~= nil and strret ~= nil then
-                    return dovret, strret
+                    --return dovret, strret
+                    matched = "maxmind:geoloc_city"
+                    goto log_and_return
                 end
             end
             -- MaxMind Subdivision
@@ -451,7 +493,9 @@ function auth_passdb_lookup(req)
                     dovret, strret = check_simplefile("maxmind/geo_loc.deny.lst",
                         subdiv.geoname_id, subdiv.names.en .. ", " .. data.maxmind.country.names.en)
                     if dovret ~= nil and strret ~= nil then
-                        return dovret, strret
+                        --return dovret, strret
+                        matched = "maxmind:geoloc_subdiv"
+                        goto log_and_return
                     end
                 end
             end
@@ -459,7 +503,9 @@ function auth_passdb_lookup(req)
             if data.maxmind.country ~= nil then
                 dovret, strret = check_simplefile("maxmind/geo_loc.deny.lst", data.maxmind.country.geoname_id, data.maxmind.country.names.en)
                 if dovret ~= nil and strret ~= nil then
-                    return dovret, strret
+                    --return dovret, strret
+                    matched = "maxmind:geoloc_country"
+                    goto log_and_return
                 end
             end
             if data.maxmind.location.latitude ~= nil and
@@ -486,19 +532,66 @@ function auth_passdb_lookup(req)
                             --print(overlap, overlap/data.maxmind.location.accuracy_radius)
                             if overlap/data.maxmind.location.accuracy_radius > tonumber(rad_overlap) then
                                 dovecot.i_info(data.maxmind.location.latitude .. "," .. data.maxmind.location.longitude .. " is close to " .. lat .. "," .. lon)
-                            	return dovecot.auth.PASSDB_RESULT_USER_DISABLED,
-                                    "not allowed to authenticate close to forbidden location"
+                            	--return dovecot.auth.PASSDB_RESULT_USER_DISABLED,
+                                --    "not allowed to authenticate close to forbidden location"
+                                matched = string.format("maxmind:geoloc:%f,%f,%d,%f", lat, lon, rad, rad_overlap)
+                                goto log_and_return
                             end
                         end
                     end
                 end
             end
         end
+
+        ::log_and_return::
+        local es = table.concat(data.entities, ", entity=")
+
+        local audit = string.format("mail-audit: user=<%s>, service=%s, ip=%s, host=%s, asn=%s, as_cc=%s, as_desc=<%s>, net_name=<%s>, net_cc=%s, entity=%s",
+            req.user, req.service, req.remote_ip, dns, data.asn, data.asn_country_code, data.asn_description, data.net_name, data.net_country_code, es
+        )
+
+        if dovret == result_block then
+        	dovecot.i_info(audit .. string.format(", blocked=True, matched=%s", matched))
+        else
+            dovecot.i_info(audit)
+        end
+
+        if maxmind and data.maxmind ~= nil then
+            --print(dump(data.maxmind))
+            local city = data.maxmind.city and string.format("%s/%d", data.maxmind.city.names.en, data.maxmind.city.geoname_id) or ""
+            local country = data.maxmind.country and string.format("%s/%d", data.maxmind.country.iso_code, data.maxmind.country.geoname_id) or ""
+            local continent = data.maxmind.continent and string.format("%s/%d", data.maxmind.continent.code, data.maxmind.continent.geoname_id) or ""
+            local registered_country = data.maxmind.registered_country and string.format("%s/%d", data.maxmind.registered_country.iso_code, data.maxmind.registered_country.geoname_id) or ""
+
+            --print(req.user, req.remote_ip, data.maxmind.asn, data.maxmind.as_org, city)
+            local logstr = string.format("mail-audit-maxmind: user=<%s>, service=%s, ip=%s, asn=%s, as_org=<%s>, city=<%s>",
+                req.user, req.service, req.remote_ip, data.maxmind.asn, data.maxmind.as_org, city
+            )
+            if data.maxmind.subdivisions ~= nil then
+                for i, subdiv in ipairs(data.maxmind.subdivisions) do
+                    logstr = logstr .. string.format(", subdivision[%d]=<%s/%d>", i - 1, subdiv.names.en, subdiv.geoname_id)
+                end
+            end
+            logstr = logstr .. string.format(", country=<%s>, continent=<%s>, registered_country=<%s>",
+                country, continent, registered_country
+            )
+            if data.maxmind.represented_country ~= nil then
+                	logstr = logstr .. string.format(", represented_country=<%s/%d>", data.maxmind.represented_country.iso_code, data.maxmind.represented_country.geoname_id)
+            end
+            logstr = logstr .. string.format(", lat=%f, lon=%f, rad=%dkm", data.maxmind.location.latitude, data.maxmind.location.longitude, data.maxmind.location.accuracy_radius)
+
+        	dovecot.i_info(logstr)
+        end
+
+        if dovret ~= nil and strret ~= nil then
+            return dovret, strret
+        end
     else
+        dovecot.i_error(string.format("failed to execute %s", asn_script_path))
         -- could not execute client_networks.py
         return dovecot.auth.PASSDB_RESULT_INTERNAL_FAILURE, "lookup failed"
     end
 
     -- nothing found. login ok
-    return dovecot.auth.PASSDB_RESULT_NEXT, ""
+    return success(req), ""
 end

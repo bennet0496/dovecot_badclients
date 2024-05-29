@@ -212,7 +212,7 @@ def main():
 
 
 if __name__ == "__main__":
-    # try:
+    try:
         main()
-    # except Exception as e:
-        # print('{ "error": "unknown error of type %s" }' % type(e).__name__)
+    except Exception as e:
+        print('{ "error": "unknown error of type %s" }' % type(e).__name__)

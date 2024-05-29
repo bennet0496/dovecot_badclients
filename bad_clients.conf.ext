@@ -1,7 +1,42 @@
 [general]
+; Comma separated lists fof services to always deny for
 disabled_services=pop3
+
+; Cache path can be file
+# cachepath=whois_cache.json
+; or redis uri redis:host:port
+cachepath=redis:127.0.0.1:6379
+
+; Also log/audit request from local ips
+log_local=yes
+
+; Enable MaxMind GeoLite Lookups
 enable_maxmind=yes
-cachepath=whois_cache.json
+
+; What to return if request shall succeed
+;
+; next (PASSDB_RESULT_NEXT) indicates that this passdb did not authenticate user, next passdb should do it.
+;       if we are the last passdb the request will fail
+; unknown (PASSDB_RESULT_USER_UNKNOWN) prent we don't know the user and leave it up to the current authentication state
+;         or next passdb
+; ok (PASSDB_RESULT_OK) if a previous passwd set "skip_password_check", i.e. it authenticated the user return ok.
+;    if "passdbs_seen_user_unknown" is set, i.e. none of the previous passdb knew the user we will always return unknown
+;    as well, to not inadvertently let false request through
+result_success=ok
+
+; What to return if the request shall be blocked
+;
+; disabled (PASSDB_RESULT_USER_DISABLED)
+; expired (PASSDB_RESULT_PASS_EXPIRED)
+; missmatch (PASSDB_RESULT_PASSWORD_MISMATCH)
+result_block=expired
+
+; Process the request even if the user was not previously authenticated
+; i.e. if "passdbs_seen_user_unknown" is set
+; this might increase load and cachesize if a lot of bruteforce request are happening
+; and will probably generate a lot of spam
+process_unknown=no
+
 [maxmind]
 geo_city=GeoLite2-City.mmdb
 geo_asn=GeoLite2-ASN.mmdb
