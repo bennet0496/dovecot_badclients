@@ -33,6 +33,7 @@ Then install the script dependencies with either system packaging tools like `ap
    - `ipwhois`
    - `iniconfig`
    - `portalocker`
+   - `redis` (optional)
  - Lua
    - `lua-socket`
    - `lua-json` (or `lua-cjson`)
@@ -40,7 +41,7 @@ Then install the script dependencies with either system packaging tools like `ap
 
 Put `login.lua` in `/etc/dovecot` and `client_networks.py` in `/usr/local/bin`.
 
-Now configure the passdb in Dovecot like this
+Now configure the passdb in Dovecot like this, if you want to use it as the first passdb. However, this will create a lot of spam, as any unsuccessful bruteforce attempt will be logged as well
 ```
 passdb {
   driver = lua
@@ -48,12 +49,26 @@ passdb {
   skip = never
 }
 ```
-Create a file `/etc/dovecot/bad_clients.conf.ext` to set up the paths for the scripts
-```ini
-list_path=/etc/dovecot/lists
-asn_script_path=/usr/local/bin/client_networks.py
-cachepath=/var/run/dovecot/whois_cache.json
+It is better to use it as the last passdb, and configure you privious passdb to let the request through
 ```
+passdb {
+  driver = ldap
+
+  # Path for LDAP configuration file, see example-config/dovecot-ldap.conf.ext
+  args = /etc/dovecot/dovecot-ldap.passdb.conf.ext
+  result_success = continue-ok
+}
+
+#...
+passdb {
+  driver = lua
+  args = file=/etc/dovecot/badclients/login.lua blocking=yes
+  skip = unauthenticated
+}
+
+```
+
+Create a file `/etc/dovecot/bad_clients.conf.ext` to configure the passdb. Use `bad_client.conf.ext.dist` as guidance.
 
 ## Set up the lists
 In your `list_path` you can configure the following lists. No matter how you set up the list it will be impossible to block the following networks
@@ -79,6 +94,7 @@ E.g.
 # Vodafone, DE
 AS3209
 ```
+
 ### `as_dscr.deny.lst`
 List of [Lua Regular Expressions](https://www.lua.org/pil/20.2.html) of which `ipwhois` puts as `as_desc`. Which consists of the `as-name`, first line of `descr` and the CC when running WHOIS against the AS.
 
@@ -254,6 +270,33 @@ List of IPv4 CIDR networks to block access from. E.g. `176.112.168.0/21`
 
 There is no check for set host-bits, the mask is just applied to both addresses to compare network addresses, if they match the request is blocked. This means for example `176.112.170.0/21` is equivalent to `176.112.168.0/21`
 
+### MaxMind Filters
+If you have configured the MaxMind GeoLite Database, you can also set up lists based on the results.
+
+#### `maxmind/as_org.deny.ist`
+This is similar to `as_decr.deny.lst`, however, it is to Match the GeoLite ASN Database, that gives slightly different results.
+
+#### `maxmind/geo_loc.deny.ist`
+A list of numeric [Geoname IDs](https://www.geonames.org/). Matched against the City's, Most specific Subdivision's, Country's Geoname ID.
+
+Ex
+```
+;Virgina, USA
+6254928
+
+;Ashburn, Virgina, USA
+4744870
+```
+
+#### `maxmind/coords.deny.lst`
+List of coordinates and radii that are intersected with the location and confidence radius of the Maxmind lookup. The format per line is `latitude,longitude,radius,intersection`.
+
+For the check the circle drawn by these coordinates and the radius (in kilometers) and the circle drawn by MaxMind's coordinates and their accuracy radius (in kilometer) are checked for an intersection. If the overlap is more than (intersection*100)% of their accuracy radius, the request is blocked
+
+E.g. The radii of 38.741104,-49.6676859,100 and 37.977529,-48.2432889,100 intersect about 50km, i.e. ~50%
+
+For an intersection >= 1 their center coordinate is fully contained within our circle
+
 ## Logs
 The script additionally generates log lines like this for later eximination
 ```
@@ -268,6 +311,8 @@ A script to retrieve user statisics of the last 24h might look something like th
 ```bash
 journalctl -S "24 hours ago" -g "mail-audit" | awk -F : '{print $6}' | sort | uniq -c | sort -h
 ```
+
+Or some more sophisticated stats might be generated with `audit.py`.
 
 ## Integration Other Services
 Mail ecosystems usually don't only consist of IMAP (or POP) servers, but have SMTP components for users to send emails as well. While it is possible for dovecot to act as an MUA, it is not a very common setup. Dedicated SMTP server like Exim or Postfix are probably used much more often. If these use SASL authentication with dovecot, they (at least Exim) will integrate flawlessly, showing up as `service=smtp` with the appropriate client IP address of the client connecting to SMTP.

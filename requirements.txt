@@ -6,3 +6,4 @@ wheel==0.43.0
 iniconfig==2.0.0
 portalocker==2.8.2
 geoip2~=4.8.0
+redis>=5.0.4
