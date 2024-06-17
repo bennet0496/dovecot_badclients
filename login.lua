@@ -25,6 +25,7 @@ package.path = package.path .. ";/etc/dovecot/lua/?.lua"
 local list_path = "./lists"
 local asn_script_path = "./client_networks.py"
 local disabled_services = {}
+local ignore_networks = {}
 local maxmind = false
 local log_local = false
 local process_unknown = false
@@ -176,7 +177,7 @@ function check_regexpfile(filename, data)
                         "not allowed to authenticate from " .. data
                 elseif not success then
                     dovecot.i_error("syntax error in " .. list_path .. "/" .. filename .. " line "..i)
-                    return dovecot.auth.PASSDB_RESULT_INTERNAL_FAILURE, "config error"
+                    --return dovecot.auth.PASSDB_RESULT_INTERNAL_FAILURE, "config error"
                 end
             end
         end
@@ -215,6 +216,43 @@ function check_ccfile(filename, cc)
         end
     end
     return nil, nil
+end
+
+function in_network(ip, network)
+    -- Parse CIDR entry from file
+    local sno1,sno2,sno3,sno4,smask = network:match("(%d%d?%d?)%.(%d%d?%d?)%.(%d%d?%d?)%.(%d%d?%d?)/(%d%d?)")
+    local sio1,sio2,sio3,sio4 = ip:match("(%d%d?%d?)%.(%d%d?%d?)%.(%d%d?%d?)%.(%d%d?%d?)")
+
+    if sio1 == nil or sio2 ==nil or sio3 == nil or sio4 == nil then
+        dovecot.i_error("error parsing IP. IPv6 is currently unsupported")
+        return nil
+    end
+
+    local no1,no2,no3,no4,mask = tonumber(sno1),tonumber(sno2),tonumber(sno3),tonumber(sno4),tonumber(smask)
+    local io1,io2,io3,io4 = tonumber(sio1),tonumber(sio2),tonumber(sio3),tonumber(sio4)
+
+    if type(io1) ~= "number" or type(io2) ~= "number" or type(io3) ~= "number" or type(io4) ~= "number" or
+        io1 > 255 or io2 > 255 or io3 > 255 or io4 > 255 then
+        dovecot.i_error(ip .. " is not valid ip expression")
+        return nil
+    end
+
+    if type(no1) ~= "number" or type(no2) ~= "number" or type(no3) ~= "number" or type(no4) ~= "number" or type(mask) ~= "number" or
+        no1 > 255 or no2 > 255 or no3 > 255 or no4 > 255 or mask > 32 then
+        dovecot.i_error(network .. " is not valid network expression")
+        return nil
+    end
+
+    local net_num = (no1 << 24) | (no2 << 16) | (no3 << 8) | no4
+    local ip_num = (io1 << 24) | (io2 << 16) | (io3 << 8) | io4
+
+    if net_num & (0xffffffff << (32-mask)) ~= net_num then
+        dovecot.i_warning(string.format("%s has hostbits set", network))
+    end
+
+    -- after applying the mask, the network addresses are the same
+    -- 1111 1111.1111 1111.1111 1111.1111 1111 << (32 - mask)
+    return net_num & (0xffffffff << (32-mask)) == ip_num & (0xffffffff << (32-mask))
 end
 
 function script_init()
@@ -275,6 +313,13 @@ function script_init()
             local ins = match:match("^%s*(.-)%s*$")
             table.insert(disabled_services, ins or match)
             dovecot.i_info("will always deny for " .. (ins or match))
+        end
+    end
+
+    if conf["general"]["ignore_networks"] ~= nil then
+    	for match in (conf["general"]["ignore_networks"]..","):gmatch("(.-),") do
+            local ins = match:match("^%s*(.-)%s*$")
+            table.insert(ignore_networks, ins or match)
         end
     end
 
@@ -348,49 +393,30 @@ function auth_passdb_lookup(req)
         	return success(req), ""
         end
 
+        -- ignore configured networks
+        for _, net in ipairs(ignore_networks) do
+        	if in_network(req.remote_ip, net) then
+                return success(req), ""
+        	end
+        end
+
         -- Check CIDR IP Networks
         for line in iter_file("ip_net.deny.lst")
         do
             i = i + 1
             if non_empty(line) then
-                -- Parse CIDR entry from file
-                local no1,no2,no3,no4,mask = line:match("(%d%d?%d?)%.(%d%d?%d?)%.(%d%d?%d?)%.(%d%d?%d?)/(%d%d?)")
-                local io1,io2,io3,io4 = req.remote_ip:match("(%d%d?%d?)%.(%d%d?%d?)%.(%d%d?%d?)%.(%d%d?%d?)")
-
-                if no1 == nil or no2 == nil or no3 == nil or no4 == nil or mask == nil or
-                    no1 > 255 or no2 > 255 or no3 > 255 or no4 > 255 or mask > 32 then
-                    return dovecot.auth.PASSDB_RESULT_INTERNAL_FAILURE,
-                        "syntax error in " .. list_path .. "/ip_net.deny.lst line " .. i
-                end
-
-                if io1 == nil or io2 ==nil or io3 == nil or io4 == nil then
-                    dovecot.i_error("error parsing IP. IPv6 is currently unsupported")
-                    goto continue_next_ip
-                end
-
-                local net_num = (no1 << 24) | (no2 << 16) | (no3 << 8) | no4
-                local ip_num = (io1 << 24) | (io2 << 16) | (io3 << 8) | io4
-
-                if net_num & (0xffffffff << (32-mask)) ~= net_num then
-                	dovecot.i_warning(string.format("ip_net.deny.lst line %d %d.%d.%d.%d/%d has hostbits set", i, no1, no2, no3, no4, mask))
-                end
-
-                -- after applying the mask, the network addresses are the same
-                -- 1111 1111.1111 1111.1111 1111.1111 1111 << (32 - mask)
-                if net_num & (0xffffffff << (32-mask)) == ip_num & (0xffffffff << (32-mask)) then
+                if in_network(req.remote_ip, line) then
                     dovret = result_block
                     strret = "not allowed to authenticate from " .. line
                     matched = "ip_net"
                     goto log_and_return
                 end
             end
-            ::continue_next_ip::
         end
         -- Check DNS name Regexes
         -- https://www.lua.org/pil/20.2.html
         dovret, strret = check_regexpfile("rev_host.deny.lst", dns)
         if dovret ~= nil and strret ~= nil then
-            --return dovret, strret
             matched = "rev_host"
             goto log_and_return
         end
@@ -403,16 +429,12 @@ function auth_passdb_lookup(req)
             if non_empty(line) then
                 if line:match("AS%d+") == data.asn:match("AS%d+") or
                     (data.maxmind ~= nil and line:match("AS%d+") == data.maxmind.asn:match("AS%d+")) then
-                    --return data.asn, line
-                    --return dovecot.auth.PASSDB_RESULT_USER_DISABLED,
-                    --    "not allowed to authenticate from " .. data.asn;
                     dovret = result_block
                     strret = "not allowed to authenticate from " .. data.asn
                     matched = "asn"
                     goto log_and_return
                 elseif line:match("AS%d+") == nil then
                     dovecot.i_error("syntax error in "..list_path.."/asn_num.deny.lst line "..i)
-                    --return dovecot.auth.PASSDB_RESULT_INTERNAL_FAILURE, "config error"
                     goto continue_next_as
                 end
             end
@@ -421,7 +443,6 @@ function auth_passdb_lookup(req)
         -- Check AS Registration Countries
         dovret, strret = check_ccfile("as_cc.deny.lst", data.asn_country_code)
         if dovret ~= nil and strret ~= nil then
-            --return dovret, strret
             matched = "as_cc"
             goto log_and_return
         end
@@ -429,14 +450,12 @@ function auth_passdb_lookup(req)
         -- https://www.lua.org/pil/20.2.html
         dovret, strret = check_regexpfile("as_dscr.deny.lst", data.as_dscr)
         if dovret ~= nil and strret ~= nil then
-            --return dovret, strret
             matched = "as_dscr"
             goto log_and_return
         end
         -- Check Network Country Code
         dovret, strret = check_ccfile("net_cc.deny.lst", data.net_country_code)
         if dovret ~= nil and strret ~= nil then
-            --return dovret, strret
             matched = "net_cc"
             goto log_and_return
         end
@@ -445,7 +464,6 @@ function auth_passdb_lookup(req)
         -- https://www.lua.org/pil/20.2.html
         dovret, strret = check_regexpfile("net_name.deny.lst", data.net_name)
         if dovret ~= nil and strret ~= nil then
-            --return dovret, strret
             matched = "net_name"
             goto log_and_return
         end
@@ -456,8 +474,6 @@ function auth_passdb_lookup(req)
                 if non_empty(line) then
                     for _, ent in ipairs(data.entities) do
                         if line:lower() == ent:lower() then -- equalsIgnoreCase
-                            --return dovecot.auth.PASSDB_RESULT_USER_DISABLED,
-                            --    "not allowed to authenticate from network with related entity " .. ent
                             dovret = result_block
                             strret = "not allowed to authenticate from network with related entity " .. ent
                             matched = "entity:" .. ent

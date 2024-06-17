@@ -1,6 +1,7 @@
 {
     "diagnostics.disable": [
-        "lowercase-global"
+        "lowercase-global",
+        "trailing-space"
     ],
     "diagnostics.globals": [
         "non_empty"

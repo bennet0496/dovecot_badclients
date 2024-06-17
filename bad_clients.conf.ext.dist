@@ -1,4 +1,9 @@
 [general]
+; Directory with lists
+list_path=/etc/dovecot/lists
+; path to the python script
+asn_script_path=/usr/local/bin/client_networks.py
+
 ; Comma separated lists fof services to always deny for
 disabled_services=pop3
 
@@ -9,6 +14,9 @@ cachepath=redis:127.0.0.1:6379
 
 ; Also log/audit request from local ips
 log_local=yes
+
+; Additional networks to not block and not log
+ignore_networks=192.168.0.0/16,224.0.0.0/4
 
 ; Enable MaxMind GeoLite Lookups
 enable_maxmind=yes
